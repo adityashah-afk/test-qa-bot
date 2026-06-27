@@ -2,6 +2,7 @@
 """
 Aegis - Complete Market Ready Backend
 Includes: 14-Day Trial Expiry, Referral System, Try-It-Now Demo, Chatbot, Auto-Heal
+TEAM PLAN: Centralized Keys, Audit Logs, Team Rules
 """
 
 import os
@@ -66,6 +67,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Users table (with org_id and role)
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,7 +84,9 @@ def init_db():
             model TEXT DEFAULT '',
             trial_expires_at TIMESTAMP,
             referral_code TEXT UNIQUE,
-            referred_by INTEGER
+            referred_by INTEGER,
+            org_id INTEGER,
+            role TEXT DEFAULT 'member'
         )
     ''')
     c.execute('''
@@ -117,9 +121,46 @@ def init_db():
             FOREIGN KEY (referred_user_id) REFERENCES users (id)
         )
     ''')
+    # ============================================================
+    # TEAM / ENTERPRISE TABLES
+    # ============================================================
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS organizations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            owner_id INTEGER NOT NULL,
+            stripe_customer_id TEXT,
+            subscription_tier TEXT DEFAULT 'individual',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (owner_id) REFERENCES users (id)
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS org_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id INTEGER NOT NULL,
+            setting_key TEXT NOT NULL,
+            setting_value TEXT,
+            FOREIGN KEY (org_id) REFERENCES organizations (id)
+        )
+    ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            org_id INTEGER,
+            user_id INTEGER,
+            action TEXT NOT NULL,
+            pr_number INTEGER,
+            repo_name TEXT,
+            details TEXT,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (org_id) REFERENCES organizations (id),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
     conn.commit()
     conn.close()
-    logger.info("Database initialized.")
+    logger.info("Database initialized with Team/Enterprise tables.")
 
 def migrate_db():
     conn = sqlite3.connect(DB_PATH)
@@ -133,19 +174,26 @@ def migrate_db():
     try:
         c.execute("ALTER TABLE users ADD COLUMN trial_expires_at TIMESTAMP")
         conn.commit()
-        logger.info("Added 'trial_expires_at' column.")
     except sqlite3.OperationalError:
         pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN referral_code TEXT UNIQUE")
         conn.commit()
-        logger.info("Added 'referral_code' column.")
     except sqlite3.OperationalError:
         pass
     try:
         c.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
         conn.commit()
-        logger.info("Added 'referred_by' column.")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN org_id INTEGER")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'member'")
+        conn.commit()
     except sqlite3.OperationalError:
         pass
     conn.close()
@@ -309,6 +357,35 @@ Here is the current code:Apply the change and return ONLY the corrected code. Ma
         return {'success': False, 'error': str(e)}
 
 # ============================================================
+# TEAM / ENTERPRISE HELPERS
+# ============================================================
+def get_org_settings(org_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT setting_key, setting_value FROM org_settings WHERE org_id = ?', (org_id,))
+    rows = c.fetchall()
+    conn.close()
+    return {row[0]: row[1] for row in rows}
+
+def get_org_api_key(org_id):
+    settings = get_org_settings(org_id)
+    return settings.get('deepseek_api_key') or settings.get('openai_api_key') or None
+
+def get_org_rules(org_id):
+    settings = get_org_settings(org_id)
+    return settings.get('testing_rules', '')
+
+def log_audit(org_id, user_id, action, pr_number=None, repo_name=None, details=None):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO audit_logs (org_id, user_id, action, pr_number, repo_name, details)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (org_id, user_id, action, pr_number, repo_name, details))
+    conn.commit()
+    conn.close()
+
+# ============================================================
 # Webhook Verification
 # ============================================================
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
@@ -325,7 +402,7 @@ def health_check():
     return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
 
 # ============================================================
-# TRY-IT-NOW DEMO (No signup required)
+# TRY-IT-NOW DEMO
 # ============================================================
 @app.route("/try", methods=['GET', 'POST'])
 def try_endpoint():
@@ -396,7 +473,7 @@ def try_endpoint():
             })
 
 # ============================================================
-# WEBHOOK (Full version)
+# WEBHOOK (Full version with Team Support)
 # ============================================================
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -421,6 +498,23 @@ def webhook():
         logger.warning(f"No user found for repo {repo_name}, falling back to env tokens.")
         user = None
 
+    # ============================================================
+    # TEAM LOGIC: Check for Organization Key
+    # ============================================================
+    org_api_key = None
+    org_id = None
+    team_rules = None
+    if user:
+        org_id = user[14] if len(user) > 14 else None
+        if org_id:
+            org_api_key = get_org_api_key(org_id)
+            team_rules = get_org_rules(org_id)
+            if org_api_key:
+                logger.info(f"Using Organization API Key for Org ID {org_id}")
+
+    # ============================================================
+    # CHATBOT & MANUAL COMMANDS
+    # ============================================================
     if event == "issue_comment":
         issue = payload.get("issue", {})
         comment_body = payload.get("comment", {}).get("body", "")
@@ -431,13 +525,23 @@ def webhook():
             question = comment_body.replace("/ask", "").strip() or "What does this code do?"
             logger.info(f"Chatbot triggered on PR #{pr_number} in {repo_name}")
             try:
-                if user:
+                # Set keys (prefer Org key over User key)
+                if org_api_key:
+                    os.environ['LLM_PROVIDER'] = 'deepseek'
+                    os.environ['OPENAI_API_KEY'] = org_api_key
+                elif user:
                     os.environ['LLM_PROVIDER'] = user[3]
                     os.environ['OPENAI_API_KEY'] = user[4] or ""
-                    os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
+                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+                
                 diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
                 answer = ask_question_about_code(question, diff_content)
                 post_comment(repo, pr_number, f"🤖 **AI Chatbot:**\n\n{answer}")
+                
+                # Audit Log
+                if org_id:
+                    log_audit(org_id, user[0], 'ask', pr_number, repo_name, f"Asked: {question}")
+                
                 logger.info(f"Chatbot replied to PR #{pr_number}")
                 return jsonify({"msg": "Chatbot replied"}), 200
             except Exception as e:
@@ -447,18 +551,19 @@ def webhook():
         elif issue.get("pull_request") and comment_body.strip().startswith("/fix"):
             logger.info(f"Manual fix triggered on PR #{pr_number} in {repo_name}")
             try:
-                if user:
+                if org_api_key:
+                    os.environ['LLM_PROVIDER'] = 'deepseek'
+                    os.environ['OPENAI_API_KEY'] = org_api_key
+                elif user:
                     os.environ['LLM_PROVIDER'] = user[3]
                     os.environ['OPENAI_API_KEY'] = user[4] or ""
-                    os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
-                    user_model = user[11] if len(user) > 11 else None
-                else:
-                    user_model = None
-
+                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+                
+                user_model = user[11] if user and len(user) > 11 else None
                 diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
                 api_key = user[4] if user else None
-                use_mock = not api_key
-                result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model)
+                use_mock = not (org_api_key or api_key)
+                result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model, repo=repo, pr=pr, team_rules=team_rules)
                 status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
                 reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix`)**
 
@@ -473,6 +578,8 @@ def webhook():
 🔔 *This fix was applied automatically. Review the changes and merge if satisfied.*
 """
                 post_comment(repo, pr_number, reply)
+                if org_id:
+                    log_audit(org_id, user[0] if user else None, 'fix', pr_number, repo_name, f"Status: {status}")
                 logger.info(f"Direct fix comment posted to PR #{pr_number}")
                 return jsonify({"msg": "Direct fix posted"}), 200
 
@@ -483,18 +590,19 @@ def webhook():
         elif issue.get("pull_request") and comment_body.strip().startswith("/fix-ask"):
             logger.info(f"Fix with approval triggered on PR #{pr_number} in {repo_name}")
             try:
-                if user:
+                if org_api_key:
+                    os.environ['LLM_PROVIDER'] = 'deepseek'
+                    os.environ['OPENAI_API_KEY'] = org_api_key
+                elif user:
                     os.environ['LLM_PROVIDER'] = user[3]
                     os.environ['OPENAI_API_KEY'] = user[4] or ""
-                    os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
-                    user_model = user[11] if len(user) > 11 else None
-                else:
-                    user_model = None
-
+                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+                
+                user_model = user[11] if user and len(user) > 11 else None
                 diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
                 api_key = user[4] if user else None
-                use_mock = not api_key
-                result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model)
+                use_mock = not (org_api_key or api_key)
+                result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model, repo=repo, pr=pr, team_rules=team_rules)
                 status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
 
                 if result['fixed_code'] and result['diff_output']:
@@ -520,6 +628,8 @@ def webhook():
 🔔 *This fix was manually triggered. You have 24 hours to approve or reject.*
 """
                 post_comment(repo, pr_number, reply)
+                if org_id:
+                    log_audit(org_id, user[0] if user else None, 'fix-ask', pr_number, repo_name, f"Status: {status}")
                 logger.info(f"Pending fix (with errors) posted to PR #{pr_number}")
                 return jsonify({"msg": "Pending fix with errors posted"}), 200
 
@@ -556,6 +666,8 @@ def webhook():
 🔔 *This change was manually triggered. You have 24 hours to approve or reject.*
 """
                     post_comment(repo, pr_number, reply)
+                    if org_id:
+                        log_audit(org_id, user[0] if user else None, 'change', pr_number, repo_name, f"Change: {instruction}")
                     logger.info(f"Pending change posted to PR #{pr_number}")
                     return jsonify({"msg": "Pending change posted"}), 200
                 else:
@@ -581,6 +693,8 @@ Here is the applied fix (diff):
 """
                     update_pending_fix_status(fix_id, 'approved')
                     post_comment(repo, pr_number, reply)
+                    if org_id:
+                        log_audit(org_id, user[0] if user else None, 'approve', pr_number, repo_name, "Approved fix")
                     logger.info(f"Fix approved and posted to PR #{pr_number}")
                 else:
                     reply = f"""❌ **Fix Rejected.**
@@ -591,6 +705,8 @@ The AI fix has been cancelled. No changes were made.
 """
                     update_pending_fix_status(fix_id, 'rejected')
                     post_comment(repo, pr_number, reply)
+                    if org_id:
+                        log_audit(org_id, user[0] if user else None, 'reject', pr_number, repo_name, "Rejected fix")
                     logger.info(f"Fix rejected on PR #{pr_number}")
                 return jsonify({"msg": f"Fix {decision}ed"}), 200
             else:
@@ -599,20 +715,27 @@ The AI fix has been cancelled. No changes were made.
 
         return jsonify({"msg": "Ignored comment"}), 200
 
+    # ============================================================
+    # AUTOMATIC WEBHOOK (Pull Request)
+    # ============================================================
     if event == "pull_request" and payload.get("action") in ["opened", "synchronize"]:
         pr_number = payload["number"]
         logger.info(f"Processing PR #{pr_number} in {repo_name}")
         try:
-            if user:
+            # Set keys (prefer Org key over User key)
+            if org_api_key:
+                os.environ['LLM_PROVIDER'] = 'deepseek'
+                os.environ['OPENAI_API_KEY'] = org_api_key
+            elif user:
                 os.environ['LLM_PROVIDER'] = user[3]
                 os.environ['OPENAI_API_KEY'] = user[4] or ""
-                os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
+            os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
 
             diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
             api_key = user[4] if user else None
-            use_mock = not api_key
+            use_mock = not (org_api_key or api_key)
             user_model = user[11] if user and len(user) > 11 else None
-            result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model)
+            result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model, repo=repo, pr=pr, team_rules=team_rules)
             status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
             comment = f"""🤖 **AI QA Report for PR #{pr_number}**
 
@@ -627,6 +750,8 @@ The AI fix has been cancelled. No changes were made.
 🔔 *This is an automated analysis. Please review the suggested changes.*
 """
             post_comment(repo, pr_number, comment)
+            if org_id:
+                log_audit(org_id, user[0] if user else None, 'auto-fix', pr_number, repo_name, f"Status: {status}")
             logger.info(f"Comment posted to PR #{pr_number}")
             return jsonify({"msg": "PR processed"}), 200
         except Exception as e:
@@ -865,6 +990,79 @@ def stripe_webhook():
         logger.info(f"Subscription {subscription['id']} canceled")
     return jsonify({"status": "success"}), 200
 
+# ============================================================
+# TEAM ROUTES
+# ============================================================
+@app.route("/team-settings", methods=['POST'])
+def team_settings():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    user = get_user_by_id(session['user_id'])
+    org_id = user[14] if len(user) > 14 else None
+    
+    if not org_id:
+        flash("You are not part of an organization. Please upgrade to the Team plan.")
+        return redirect(url_for('dashboard'))
+    
+    org_api_key = request.form.get('org_api_key')
+    testing_rules = request.form.get('testing_rules')
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    if org_api_key:
+        c.execute('''
+            INSERT INTO org_settings (org_id, setting_key, setting_value)
+            VALUES (?, 'deepseek_api_key', ?)
+            ON CONFLICT(org_id, setting_key) DO UPDATE SET setting_value = excluded.setting_value
+        ''', (org_id, org_api_key))
+    if testing_rules:
+        c.execute('''
+            INSERT INTO org_settings (org_id, setting_key, setting_value)
+            VALUES (?, 'testing_rules', ?)
+            ON CONFLICT(org_id, setting_key) DO UPDATE SET setting_value = excluded.setting_value
+        ''', (org_id, testing_rules))
+    conn.commit()
+    conn.close()
+    
+    flash("Team settings saved!")
+    return redirect(url_for('dashboard'))
+
+@app.route("/audit-logs")
+def audit_logs():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    
+    user = get_user_by_id(session['user_id'])
+    org_id = user[14] if len(user) > 14 else None
+    
+    if not org_id:
+        flash("No organization found.")
+        return redirect(url_for('dashboard'))
+    
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        SELECT u.username, a.action, a.pr_number, a.repo_name, a.details, a.timestamp
+        FROM audit_logs a
+        JOIN users u ON a.user_id = u.id
+        WHERE a.org_id = ?
+        ORDER BY a.timestamp DESC
+        LIMIT 50
+    ''', (org_id,))
+    logs = c.fetchall()
+    conn.close()
+    
+    # Render a simple table (you can upgrade this to a proper HTML template later)
+    html = "<h1>Audit Logs</h1><table border='1'><tr><th>User</th><th>Action</th><th>PR</th><th>Repo</th><th>Details</th><th>Time</th></tr>"
+    for log in logs:
+        html += f"<tr><td>{log[0]}</td><td>{log[1]}</td><td>{log[2]}</td><td>{log[3]}</td><td>{log[4]}</td><td>{log[5]}</td></tr>"
+    html += "</table><a href='/dashboard'>Back to Dashboard</a>"
+    return html
+
+# ============================================================
+# DASHBOARD
+# ============================================================
 @app.route("/dashboard", methods=['GET', 'POST'])
 def dashboard():
     if 'user_id' not in session:
@@ -914,7 +1112,7 @@ def dashboard():
             html = html.replace('Billing Status: Inactive', 'Billing Status: ❌ Trial Expired')
     github_status = '✅ Connected' if user[6] else '❌ Not Connected'
     html = html.replace('GitHub Status: Not Connected', f'GitHub Status: {github_status}')
-    # Referral section – we will inject placeholder that dashboard.html uses
+    # Referral section
     html = html.replace('{{ referral_link }}', referral_link)
     html = html.replace('{{ referral_count }}', str(referral_count))
     return html
