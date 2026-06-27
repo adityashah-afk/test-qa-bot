@@ -451,9 +451,14 @@ def webhook():
         logger.warning("Invalid signature")
         return jsonify({"error": "Invalid signature"}), 401
 
-    event = request.headers.get("X-GitHub-Event")
-    payload = request.get_json()
-    repo_name = payload.get("repository", {}).get("full_name")
+    except Exception as e:
+    logger.error(f"Error: {e}")
+    # Also log the diff for debugging
+    try:
+        logger.error(f"Diff preview: {diff_content[:500] if 'diff_content' in locals() else 'No diff'}")
+    except:
+        pass
+    return jsonify({"error": str(e)}), 500
 
     if event == "ping": return jsonify({"msg": "pong"}), 200
 
