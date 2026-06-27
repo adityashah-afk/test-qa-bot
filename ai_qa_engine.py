@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """
 AI QA ENGINE - Universal Provider Support
-Supports: OpenAI, Anthropic, DeepSeek, Grok, Azure, and ANY OpenAI-compatible endpoint.
-BYOK (Bring Your Own Key) - We never see your data.
-FIX: OOM Protection using resource.setrlimit
+FIX: OOM Protection (Memory Limit) + Zero-Change Baseline Test (Flaky Loop Fix)
 """
 
 import os
@@ -12,7 +10,7 @@ import subprocess
 import difflib
 import tempfile
 import re
-import resource  # <-- NEW: For memory limits
+import resource
 from pathlib import Path
 from typing import Tuple
 from security_guard import hybrid_security_scan
@@ -185,9 +183,7 @@ def test_discount_edge_cases():
         return self.llm.generate(prompt)
 
     def run_test(self, test_code: str, source_code: str) -> Tuple[bool, str]:
-        # ============================================================
-        # SECURITY: Use the hybrid security scanner (AST + Regex)
-        # ============================================================
+        # Security Scan
         safe, msg = hybrid_security_scan(test_code)
         if not safe:
             return False, f"❌ Security violation in test: {msg}"
@@ -202,22 +198,17 @@ def test_discount_edge_cases():
             tst_path.write_text(test_code)
 
             try:
-                # ============================================================
-                # FIX 1: OOM Protection (Memory Limit)
-                # ============================================================
-                # Set a memory limit of 256MB for the subprocess.
-                # This prevents `9**9**9**9` from crashing the host.
                 def set_memory_limit():
                     try:
-                        resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, -1))  # 256 MB hard limit
+                        resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, -1))
                     except (resource.error, AttributeError):
-                        pass  # Fallback for systems that don't support resource (Windows)
+                        pass
                 
                 result = subprocess.run(
                     [sys.executable, "-m", "pytest", str(tst_path), "--tb=short", "-v"],
                     capture_output=True, text=True, cwd=tmpdir,
                     timeout=10,
-                    preexec_fn=set_memory_limit  # Apply memory limit before executing pytest
+                    preexec_fn=set_memory_limit
                 )
                 if result.returncode == 0:
                     return True, result.stdout
@@ -252,28 +243,65 @@ def test_discount_edge_cases():
         )
         return "".join(diff)
 
+    # ============================================================
+    # FIX 4: ZERO-CHANGE BASELINE TEST (Flaky Loop Protection)
+    # ============================================================
     def run_full_loop(self) -> Tuple[bool, str, str]:
         print(f"🧠 AI QA Loop starting... (Provider: {self.llm.provider.upper() if self.llm else 'MOCK'})")
+        
+        # ============================================================
+        # STEP 1: Run the baseline test BEFORE any retries
+        # ============================================================
+        baseline_test_code = self.generate_test(self.current_code)
+        passed, output = self.run_test(baseline_test_code, self.current_code)
+        
+        # If the baseline test PASSED on the first try, we are done!
+        if passed:
+            print("  ✅ Tests PASSED immediately (No bugs found)!")
+            diff = self.generate_diff(self.original_code, self.current_code)
+            return True, self.current_code, diff
+        
+        # ============================================================
+        # STEP 2: If it failed, check if it's an ENVIRONMENT error
+        # ============================================================
+        if "ImportError" in output or "ModuleNotFoundError" in output:
+            print("❌ Environment/Import Error detected. Not a code bug. Skipping retries.")
+            return False, self.current_code, f"❌ Environment error: {output[:500]}"
+        
+        # ============================================================
+        # STEP 3: If it failed due to logic, proceed with the retry loop
+        # ============================================================
+        # We don't need to regenerate the test; we can re-use it.
+        self.test_code = baseline_test_code  # Store it so we don't regenerate
         
         for attempt in range(1, MAX_RETRIES + 1):
             self.attempts = attempt
             print(f"  Attempt {attempt}/{MAX_RETRIES}...")
             
-            test_code = self.generate_test(self.current_code)
-            passed, output = self.run_test(test_code, self.current_code)
-            
-            if passed:
-                print("  ✅ Tests PASSED!")
-                diff = self.generate_diff(self.original_code, self.current_code)
-                return True, self.current_code, diff
-            
+            # We already have the test_code from baseline, but we might want to regenerate if we fix code.
+            # Let's run the existing test (or we can regenerate, but keep it simple).
+            if attempt == 1:
+                # We already ran the test; the output is stored in `output`
+                # We need to fix the code based on the baseline output.
+                current_output = output
+            else:
+                # Re-run the test on the new code
+                passed, current_output = self.run_test(self.test_code, self.current_code)
+                if passed:
+                    print("  ✅ Tests PASSED!")
+                    diff = self.generate_diff(self.original_code, self.current_code)
+                    return True, self.current_code, diff
+                # If it failed, continue to fix.
+
+            # Fix the code based on the error
             print("  ❌ Tests FAILED. Fixing...")
             if attempt == MAX_RETRIES:
                 print("  ❌ Max retries reached. Returning original code.")
                 diff = self.generate_diff(self.original_code, self.current_code)
                 return False, self.current_code, diff
             
-            self.current_code = self.fix_code(output, self.current_code)
+            self.current_code = self.fix_code(current_output, self.current_code)
         
+        # Fallback
         diff = self.generate_diff(self.original_code, self.current_code)
         return False, self.current_code, diff
