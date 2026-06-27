@@ -3,6 +3,7 @@
 Aegis - Complete Market Ready Backend
 Includes: 14-Day Trial, Referrals, Team Plan, ROI Analytics, Scarcity Upgrade Screen
 ALL COMMANDS INTACT: /ask, /fix, /fix-ask, /change, approve/reject
+Professional Signup: Full Name, Email, Company
 """
 
 import os
@@ -67,7 +68,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Users table
+    # Users table (with org_id and role)
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,7 +87,10 @@ def init_db():
             referral_code TEXT UNIQUE,
             referred_by INTEGER,
             org_id INTEGER,
-            role TEXT DEFAULT 'member'
+            role TEXT DEFAULT 'member',
+            full_name TEXT,
+            email TEXT,
+            company TEXT
         )
     ''')
     c.execute('''
@@ -156,9 +160,7 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
-    # ============================================================
-    # NEW: PR ANALYTICS (For the ROI Report)
-    # ============================================================
+    # PR Analytics (ROI)
     c.execute('''
         CREATE TABLE IF NOT EXISTS pr_analytics (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -179,7 +181,7 @@ def init_db():
 def migrate_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    columns = ['model', 'trial_expires_at', 'referral_code', 'referred_by', 'org_id', 'role']
+    columns = ['model', 'trial_expires_at', 'referral_code', 'referred_by', 'org_id', 'role', 'full_name', 'email', 'company']
     for col in columns:
         try:
             c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT ''")
@@ -622,9 +624,7 @@ def webhook():
             comment = f"""🤖 **AI QA Report for PR #{pr_number}**\n\n**Status:** {status}\n\n**Functions Detected:**\n{extract_changed_functions(diff_content)[:500]}...\n\n**AI Suggested Fix (Diff):**\n{result['diff_output'][:1500]}\n\n🔔 *This is an automated analysis. Please review the suggested changes.*"""
             post_comment(repo, pr_number, comment)
 
-            # ============================================================
-            # ROI LOGGING (NEW)
-            # ============================================================
+            # ROI LOGGING
             bugs_found = 1 if result.get('diff_output') and len(result['diff_output']) > 50 else 0
             time_saved = bugs_found * 10
             try:
@@ -661,21 +661,34 @@ def home():
     try: return load_html('index.html')
     except: return "Landing page not found.", 404
 
+# ============================================================
+# SIGNUP (PROFESSIONAL VERSION)
+# ============================================================
 @app.route("/signup", methods=['GET', 'POST'])
 def signup():
     if request.method == 'POST':
+        full_name = request.form.get('full_name')
+        email = request.form.get('email')
+        company = request.form.get('company')
         username = request.form.get('username')
         password = request.form.get('password')
         referral_code = request.form.get('ref')
-        if not username or not password: flash('Username and password required'); return redirect(url_for('signup'))
+
+        if not username or not password or not email:
+            flash('Username, Email, and Password are required')
+            return redirect(url_for('signup'))
+
         password_hash = generate_password_hash(password)
         trial_expiry = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
         my_code = generate_referral_code()
+
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         try:
-            c.execute('INSERT INTO users (username, password_hash, trial_expires_at, referral_code) VALUES (?, ?, ?, ?)',
-                      (username, password_hash, trial_expiry, my_code))
+            c.execute('''
+                INSERT INTO users (full_name, email, company, username, password_hash, trial_expires_at, referral_code)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (full_name, email, company, username, password_hash, trial_expiry, my_code))
             user_id = c.lastrowid
             if referral_code:
                 referrer = get_user_by_referral_code(referral_code)
@@ -687,26 +700,37 @@ def signup():
             flash('Account created! Your 14-day trial starts now.')
             return redirect(url_for('login'))
         except sqlite3.IntegrityError:
-            flash('Username already exists.')
+            flash('Username or Email already exists.')
             return redirect(url_for('signup'))
+
     return '''
         <!DOCTYPE html>
         <html><head><title>Aegis - Sign Up</title><script src="https://cdn.tailwindcss.com"></script>
-        <style>body { background: #000000; } .card { background: #0a0a0a; border: 1px solid #1a1a1a; } 
-        .input-dark { background: #000000; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; }
-        .input-dark:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
-        .btn-primary { background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }
-        .btn-primary:hover { background: #2563eb; }</style>
-        </head><body class="min-h-screen flex items-center justify-center">
-        <div class="card p-8 rounded-2xl max-w-md w-full">
-        <h1 class="text-2xl font-bold mb-6 text-white">Start Your 14-Day Trial</h1>
-        <form method="POST">
-        <input type="text" name="username" placeholder="Username" class="input-dark mb-4" />
-        <input type="password" name="password" placeholder="Password" class="input-dark mb-4" />
-        <input type="hidden" name="ref" value="{{ request.args.get('ref') or '' }}" />
-        <button type="submit" class="btn-primary">Start Free Trial</button>
-        </form>
-        <p class="text-sm text-[#4b5563] mt-4">Already have an account? <a href="/login" class="text-[#3b82f6] hover:underline">Log in</a></p></div></body></html>
+        <style>
+            body { background: #000000; }
+            .card { background: #0a0a0a; border: 1px solid #1a1a1a; }
+            .input-dark { background: #000000; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; }
+            .input-dark:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+            .btn-primary { background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }
+            .btn-primary:hover { background: #2563eb; }
+        </style>
+        </head>
+        <body class="min-h-screen flex items-center justify-center">
+            <div class="card p-8 rounded-2xl max-w-md w-full">
+                <h1 class="text-2xl font-bold mb-6 text-white">Start Your 14-Day Trial</h1>
+                <form method="POST">
+                    <input type="text" name="full_name" placeholder="Full Name" class="input-dark mb-4" />
+                    <input type="email" name="email" placeholder="Work Email (e.g., name@company.com)" class="input-dark mb-4" required />
+                    <input type="text" name="company" placeholder="Company Name" class="input-dark mb-4" />
+                    <input type="text" name="username" placeholder="Username" class="input-dark mb-4" />
+                    <input type="password" name="password" placeholder="Password" class="input-dark mb-4" />
+                    <input type="hidden" name="ref" value="{{ request.args.get('ref') or '' }}" />
+                    <button type="submit" class="btn-primary">Start Free Trial</button>
+                </form>
+                <p class="text-sm text-[#4b5563] mt-4">Already have an account? <a href="/login" class="text-[#3b82f6] hover:underline">Log in</a></p>
+            </div>
+        </body>
+        </html>
     '''
 
 @app.route("/login", methods=['GET', 'POST'])
@@ -893,9 +917,7 @@ def dashboard():
                 days_left = (expiry - datetime.utcnow()).days
         except: pass
 
-    # ============================================================
     # SCENARIO 1: TRIAL EXPIRED -> SCARCITY UPGRADE SCREEN
-    # ============================================================
     if is_expired:
         return render_template_string('''
         <!DOCTYPE html>
@@ -935,9 +957,7 @@ def dashboard():
         </script></body></html>
         ''')
 
-    # ============================================================
     # SCENARIO 2: TRIAL ACTIVE -> ROI DASHBOARD
-    # ============================================================
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT COUNT(DISTINCT pr_number), SUM(bugs_found), SUM(time_saved_minutes) FROM pr_analytics WHERE user_id = ? OR org_id = ?', (user_id, org_id if org_id else -1))
