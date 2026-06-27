@@ -57,7 +57,7 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
 # ============================================================
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
-YOUR_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", "https://test-qa-bot-production.up.railway.app")
+YOUR_DOMAIN = "https://test-qa-bot-production.up.railway.app"
 
 # ============================================================
 # 4. GITHUB OAUTH CONFIG
