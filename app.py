@@ -383,14 +383,265 @@ def analyze_pr_diff_routed(diff_text, use_mock, model_override, repo, pr, team_r
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
 def verify_signature(payload_body, signature_header):
     if not signature_header or not GITHUB_SECRET: return False
-    hash_object = hmac.new(GITHUB_SECRET.encode('utf-8'), msg=payload_body, digestmod=hashlib.sha256)
-    expected = "sha256=" + hash_object.hexdigest()
-    return hmac.compare_digest(expected, signature_header)
+    @app.route("/webhook", methods=["POST"])
+def webhook():
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not verify_signature(request.data, signature):
+        logger.warning("Invalid signature")
+        return jsonify({"error": "Invalid signature"}), 401
 
-@app.route("/health", methods=["GET"])
-def health_check():
-    return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
+    event = request.headers.get("X-GitHub-Event")
+    payload = request.get_json()
+    repo_name = payload.get("repository", {}).get("full_name")
 
+    if event == "ping":
+        return jsonify({"msg": "pong"}), 200
+
+    user = get_user_by_github_repo(repo_name)
+    if user and not is_trial_active(user):
+        return jsonify({"error": "Trial expired. Please subscribe."}), 402
+
+    org_api_key = None
+    org_id = None
+    team_rules = None
+    if user:
+        org_id = user[14] if len(user) > 14 else None
+        if org_id:
+            org_api_key = get_org_api_key(org_id)
+            team_rules = get_org_rules(org_id)
+
+    # ============================================================
+    # CHATBOT & MANUAL COMMANDS
+    # ============================================================
+    if event == "issue_comment":
+        issue = payload.get("issue", {})
+        comment_body = payload.get("comment", {}).get("body", "")
+        pr_number = issue.get("number")
+        repo_name = payload["repository"]["full_name"]
+
+        # --- /ask ---
+        if issue.get("pull_request") and comment_body.strip().startswith("/ask"):
+            question = comment_body.replace("/ask", "").strip() or "What does this code do?"
+            logger.info(f"Chatbot triggered on PR #{pr_number} in {repo_name}")
+            try:
+                if org_api_key:
+                    os.environ['LLM_PROVIDER'] = 'deepseek'
+                    os.environ['OPENAI_API_KEY'] = org_api_key
+                elif user:
+                    os.environ['LLM_PROVIDER'] = user[3]
+                    os.environ['OPENAI_API_KEY'] = user[4] or ""
+                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+                answer = ask_question_about_code(question, diff_content)
+                post_comment(repo, pr_number, f"🤖 **AI Chatbot:**\n\n{answer}")
+                if org_id:
+                    log_audit(org_id, user[0], 'ask', pr_number, repo_name, f"Asked: {question}")
+                return jsonify({"msg": "Chatbot replied"}), 200
+            except Exception as e:
+                logger.error(f"Chatbot Error: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        # --- /fix (Direct) ---
+        elif issue.get("pull_request") and comment_body.strip().startswith("/fix"):
+            logger.info(f"Manual fix triggered on PR #{pr_number} in {repo_name}")
+            try:
+                if org_api_key:
+                    os.environ['LLM_PROVIDER'] = 'deepseek'
+                    os.environ['OPENAI_API_KEY'] = org_api_key
+                elif user:
+                    os.environ['LLM_PROVIDER'] = user[3]
+                    os.environ['OPENAI_API_KEY'] = user[4] or ""
+                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+                user_model = user[11] if user and len(user) > 11 else None
+                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+                api_key = user[4] if user else None
+                use_mock = not (org_api_key or api_key)
+                result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
+                status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
+                reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix`)**
+
+**Status:** {status}
+
+**Functions Detected:**
+{extract_changed_functions(diff_content)[:500]}...
+
+**AI Suggested Fix (Diff):**
+{result['diff_output'][:1500]}
+
+🔔 *This fix was applied automatically. Review the changes and merge if satisfied.*
+"""
+                post_comment(repo, pr_number, reply)
+                if org_id:
+                    log_audit(org_id, user[0] if user else None, 'fix', pr_number, repo_name, f"Status: {status}")
+                return jsonify({"msg": "Direct fix posted"}), 200
+            except Exception as e:
+                logger.error(f"/fix error: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        # --- /fix-ask (Approval) ---
+        elif issue.get("pull_request") and comment_body.strip().startswith("/fix-ask"):
+            logger.info(f"Fix with approval triggered on PR #{pr_number} in {repo_name}")
+            try:
+                if org_api_key:
+                    os.environ['LLM_PROVIDER'] = 'deepseek'
+                    os.environ['OPENAI_API_KEY'] = org_api_key
+                elif user:
+                    os.environ['LLM_PROVIDER'] = user[3]
+                    os.environ['OPENAI_API_KEY'] = user[4] or ""
+                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+                user_model = user[11] if user and len(user) > 11 else None
+                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+                api_key = user[4] if user else None
+                use_mock = not (org_api_key or api_key)
+                result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
+                status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
+                if result['fixed_code'] and result['diff_output']:
+                    save_pending_fix(pr_number, repo_name, result['fixed_code'], result['diff_output'])
+                error_info = result.get('error_log', 'No errors detected.')[:500]
+                reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix-ask`)**
+
+**Status:** {status}
+
+**Functions Detected:**
+{extract_changed_functions(diff_content)[:500]}...
+
+**AI Suggested Fix (Diff):**
+{result['diff_output'][:1500]}
+
+**Errors Found:**
+{error_info}
+
+---
+✅ **Approve this fix?** Reply to this comment with `approve` to apply the fix, or `reject` to cancel.
+"""
+                post_comment(repo, pr_number, reply)
+                if org_id:
+                    log_audit(org_id, user[0] if user else None, 'fix-ask', pr_number, repo_name, f"Status: {status}")
+                return jsonify({"msg": "Pending fix posted"}), 200
+            except Exception as e:
+                logger.error(f"/fix-ask error: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        # --- /change (Natural Language) ---
+        elif issue.get("pull_request") and comment_body.strip().startswith("/change"):
+            instruction = comment_body.replace("/change", "").strip()
+            if not instruction:
+                post_comment(repo, pr_number, "❌ Please specify what you want to change.")
+                return jsonify({"msg": "No instruction"}), 200
+            logger.info(f"Code change triggered on PR #{pr_number} in {repo_name}")
+            try:
+                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+                change_result = process_natural_language_change(instruction, diff_content, user)
+                if change_result['success']:
+                    save_pending_fix(pr_number, repo_name, change_result['fixed_code'], change_result['diff_output'])
+                    reply = f"""🤖 **Aegis Code Change (Triggered via `/change`)**
+
+**Instruction:** *"{instruction}"*
+
+**Changes Made:**
+{change_result['description']}
+
+**Diff:**
+{change_result['diff_output'][:1500]}
+
+---
+✅ **Approve this change?** Reply with `approve` or `reject`.
+"""
+                    post_comment(repo, pr_number, reply)
+                    if org_id:
+                        log_audit(org_id, user[0] if user else None, 'change', pr_number, repo_name, f"Change: {instruction}")
+                    return jsonify({"msg": "Pending change posted"}), 200
+                else:
+                    post_comment(repo, pr_number, f"❌ Failed: {change_result['error']}")
+                    return jsonify({"error": change_result['error']}), 500
+            except Exception as e:
+                logger.error(f"/change error: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        # --- Approve / Reject ---
+        elif issue.get("pull_request") and comment_body.strip().lower() in ["approve", "reject"]:
+            decision = comment_body.strip().lower()
+            pending = get_pending_fix(pr_number, repo_name)
+            if pending:
+                fix_id, fixed_code, diff_output = pending
+                if decision == "approve":
+                    reply = f"""✅ **Fix Approved!**\n\nHere is the applied fix (diff):\n```\n{diff_output}\n```\n🔔 *Review and merge if satisfied.*"""
+                    update_pending_fix_status(fix_id, 'approved')
+                    post_comment(repo, pr_number, reply)
+                    if org_id:
+                        log_audit(org_id, user[0] if user else None, 'approve', pr_number, repo_name, "Approved fix")
+                else:
+                    reply = f"""❌ **Fix Rejected.**\n\nNo changes were made. Run `/fix-ask` again to generate a new suggestion."""
+                    update_pending_fix_status(fix_id, 'rejected')
+                    post_comment(repo, pr_number, reply)
+                    if org_id:
+                        log_audit(org_id, user[0] if user else None, 'reject', pr_number, repo_name, "Rejected fix")
+                return jsonify({"msg": f"Fix {decision}ed"}), 200
+            else:
+                post_comment(repo, pr_number, "❌ No pending fix found. Run `/fix-ask` or `/change` first.")
+                return jsonify({"msg": "No pending fix"}), 200
+
+        return jsonify({"msg": "Ignored comment"}), 200
+
+    # ============================================================
+    # PULL REQUEST (AUTO-HEAL + ROI LOGGING)
+    # ============================================================
+    if event == "pull_request" and payload.get("action") in ["opened", "synchronize"]:
+        pr_number = payload["number"]
+        logger.info(f"Processing PR #{pr_number} in {repo_name}")
+        try:
+            if org_api_key:
+                os.environ['LLM_PROVIDER'] = 'deepseek'
+                os.environ['OPENAI_API_KEY'] = org_api_key
+            elif user:
+                os.environ['LLM_PROVIDER'] = user[3]
+                os.environ['OPENAI_API_KEY'] = user[4] or ""
+            os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+
+            diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+            api_key = user[4] if user else None
+            use_mock = not (org_api_key or api_key)
+            user_model = user[11] if user and len(user) > 11 else None
+            result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
+            status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
+            comment = f"""🤖 **AI QA Report for PR #{pr_number}**
+
+**Status:** {status}
+
+**Functions Detected:**
+{extract_changed_functions(diff_content)[:500]}...
+
+**AI Suggested Fix (Diff):**
+{result['diff_output'][:1500]}
+
+🔔 *This is an automated analysis. Please review the suggested changes.*
+"""
+            post_comment(repo, pr_number, comment)
+
+            # ROI LOGGING
+            bugs_found = 1 if result.get('diff_output') and len(result['diff_output']) > 50 else 0
+            time_saved = bugs_found * 10
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO pr_analytics (user_id, org_id, pr_number, repo_name, bugs_found, time_saved_minutes)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (user[0] if user else None, org_id, pr_number, repo_name, bugs_found, time_saved))
+                conn.commit()
+                conn.close()
+                logger.info(f"📊 Logged analytics for PR #{pr_number}")
+            except Exception as e:
+                logger.warning(f"Could not log analytics: {e}")
+
+            if org_id:
+                log_audit(org_id, user[0] if user else None, 'auto-fix', pr_number, repo_name, f"Status: {status}")
+            return jsonify({"msg": "PR processed"}), 200
+        except Exception as e:
+            logger.error(f"Error processing PR #{pr_number}: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    return jsonify({"msg": "Ignored"}), 200
 # ============================================================
 # TRY-IT-NOW DEMO
 # ============================================================
