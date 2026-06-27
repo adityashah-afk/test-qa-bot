@@ -7,7 +7,7 @@ from ai_qa_engine import QAEngine
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# 1. HELPERS FOR IMPORT DETECTION & LOCAL SIGNATURE EXTRACTION
+# HELPERS
 # ============================================================
 
 def get_import_context(full_content: str) -> dict:
@@ -40,7 +40,7 @@ def extract_local_function_signatures(full_content: str, called_funcs: list) -> 
     if not called_funcs:
         return ""
     signatures = []
-    skip_list = {'len', 'print', 'range', 'str', 'int', 'float', 'bool', 'list', 'dict', 'set', 'tuple', 
+    skip_list = {'len', 'print', 'range', 'str', 'int', 'float', 'bool', 'list', 'dict', 'set', 'tuple',
                  'sum', 'max', 'min', 'abs', 'sorted', 'enumerate', 'zip', 'map', 'filter', 'any', 'all'}
     for func in set(called_funcs):
         if func in skip_list or func.startswith('_'):
@@ -62,13 +62,13 @@ def extract_changed_functions(diff_text: str) -> dict:
     in_func = False
     func_name = ""
     func_start = 0
-    
+
     for i, line in enumerate(lines):
         if line.startswith('+') and 'def ' in line and ':' in line:
             in_func = True
             func_name = line[1:].strip()
             func_start = i
-            for j in range(max(0, i-5), i):
+            for j in range(max(0, i - 5), i):
                 if lines[j].startswith('+') or lines[j].startswith(' '):
                     context.append(lines[j][1:] if lines[j].startswith('+') else lines[j])
             break
@@ -99,13 +99,11 @@ def get_full_file_content(repo, file_path, branch_name):
         logger.warning(f"Could not fetch full file: {e}")
         return None
 
-# ============================================================
-# 2. FIX 2: MULTI-FILE CASCADE EFFECT (Impact Radius)
-# ============================================================
 def scan_impact_radius(repo, func_name, branch_name):
     impact = []
     try:
         contents = repo.get_contents("", ref=branch_name)
+
         def traverse(items):
             for item in items:
                 if item.type == 'dir':
@@ -121,22 +119,20 @@ def scan_impact_radius(repo, func_name, branch_name):
                             lines = file_content.splitlines()
                             for i, line in enumerate(lines):
                                 if func_name in line and 'def ' not in line:
-                                    context = '\n'.join(lines[max(0,i-3):min(len(lines), i+3)])
+                                    ctx = '\n'.join(lines[max(0, i - 3):min(len(lines), i + 3)])
                                     impact.append({
                                         'file': item.path,
-                                        'context': context
+                                        'context': ctx
                                     })
                                     break
                     except:
                         pass
+
         traverse(contents)
     except Exception as e:
         logger.warning(f"Impact radius scan failed: {e}")
     return impact
 
-# ============================================================
-# 3. FIX 3: DATABASE MIGRATION EXCLUSION
-# ============================================================
 def is_migration_file(file_path):
     migration_patterns = ['migrations/', 'alembic/', 'prisma/schema.prisma', 'db/migrate/', 'schema.sql']
     for pattern in migration_patterns:
@@ -145,18 +141,18 @@ def is_migration_file(file_path):
     return False
 
 # ============================================================
-# 4. MAIN ANALYZER (ALL RETURNS ARE INSIDE FUNCTIONS)
+# MAIN ANALYZER
 # ============================================================
 def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str = None, repo=None, pr=None, team_rules: str = None) -> dict:
     extracted = extract_changed_functions(diff_text)
     code_snippet = extracted['code']
     func_name = extracted['func_name']
-    
+
     if not code_snippet or len(code_snippet) < 10:
         logger.info("ℹ️ No Python functions detected.")
         return {'success': True, 'message': 'No functions detected.', 'diff_output': '', 'fixed_code': ''}
 
-    # Check if this is a migration file
+    # Migration exclusion
     if repo and pr:
         for file in pr.get_files():
             if is_migration_file(file.filename):
@@ -173,7 +169,7 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
     import_map = {}
     local_sigs = ""
     impact_radius = []
-    
+
     if repo and pr:
         for file in pr.get_files():
             if file.filename.endswith('.py'):
@@ -184,13 +180,13 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
                     import_map = get_import_context(full_content)
                 break
 
-    # Extract local signatures
+    # Local signatures
     if full_content:
         call_pattern = r'(\w+)\('
         called_funcs = re.findall(call_pattern, code_snippet)
         local_sigs = extract_local_function_signatures(full_content, called_funcs)
 
-    # Impact Radius Scan
+    # Impact radius
     if repo and pr and func_name:
         impact_radius = scan_impact_radius(repo, func_name, pr.head.ref)
 
@@ -198,7 +194,9 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
     engine = QAEngine(use_mock=use_mock, model_override=model_override)
     engine.load_code_from_string(code_snippet)
 
+    # Override generate_test to include extra context
     original_generate = engine.generate_test
+
     def enhanced_generate(code_snippet):
         if use_mock:
             return """
@@ -248,7 +246,7 @@ This function is used in {len(impact_radius)} other file(s) in this repository.
 - Ensure tests are deterministic and do NOT hit external APIs.
 - Focus on edge cases: negative values, zeroes, nulls, and boundary conditions.
 """
-return engine.llm.generate(prompt)
+return engine.llm.generate(prompt)   # <-- This is INSIDE the function, properly indented.
 
 engine.generate_test = enhanced_generate
 
