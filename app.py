@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Aegis - Complete Market Ready Backend
-Production-Ready Session Management (No Hardcoded Keys)
+Professional Dark Theme, Error Messages, Social Login UI
 """
 
 import os
@@ -35,27 +35,21 @@ logger = logging.getLogger(__name__)
 # ============================================================
 app = Flask(__name__)
 
-# ============================================================
-# CRITICAL: Read SECRET_KEY strictly from environment
-# ============================================================
 SECRET_KEY = os.getenv('SECRET_KEY')
 if not SECRET_KEY:
     logger.critical("🚨 SECRET_KEY environment variable is NOT SET! Session cookies will be invalid on restart!")
-    # For production, we MUST crash to prevent insecure behavior.
-    # But to be safe, we set a fallback only for the first start (not recommended).
     SECRET_KEY = secrets.token_hex(32)
     logger.warning("⚠️ Using temporary SECRET_KEY. Sessions will break on restart!")
 
 app.secret_key = SECRET_KEY
 logger.info("🔐 SECRET_KEY is loaded from environment.")
 
-# Session Configuration (Market-Ready)
 app.config['SESSION_COOKIE_NAME'] = 'aegis_session'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SECURE'] = True  # Required for HTTPS (Railway uses HTTPS)
+app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_PATH'] = '/'
-app.config['SESSION_COOKIE_DOMAIN'] = None  # Uses the current domain automatically
+app.config['SESSION_COOKIE_DOMAIN'] = None
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
 
 # ============================================================
@@ -109,7 +103,7 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
-    logger.info("✅ Database initialized (tables created if missing).")
+    logger.info("✅ Database initialized.")
 
 init_db()
 
@@ -259,7 +253,7 @@ def webhook():
     return jsonify({"msg": "Ignored"}), 200
 
 # ============================================================
-# 8. FRONTEND ROUTES
+# 8. FRONTEND ROUTES (Professional Dark Theme)
 # ============================================================
 def load_html(filename):
     path = os.path.join(os.path.dirname(__file__), 'frontend', filename)
@@ -295,21 +289,40 @@ def signup():
         except sqlite3.IntegrityError:
             flash('Username already exists.')
             return redirect(url_for('signup'))
+    # Professional signup page with social login UI
     return '''
         <!DOCTYPE html>
         <html>
         <head><title>Aegis - Sign Up</title>
         <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+            body { background: #000000; }
+            .card { background: #0a0a0a; border: 1px solid #1a1a1a; }
+            .input-dark { background: #000000; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; }
+            .input-dark:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+            .btn-primary { background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }
+            .btn-primary:hover { background: #2563eb; }
+            .btn-social { background: #1a1a1a; border: 1px solid #2a2a2a; color: white; font-weight: 500; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; display: block; text-align: center; }
+            .btn-social:hover { background: #2a2a2a; border-color: #3b82f6; }
+        </style>
         </head>
-        <body class="bg-gray-950 text-white min-h-screen flex items-center justify-center">
-            <div class="bg-gray-900 p-8 rounded-2xl border border-gray-800 max-w-md w-full">
-                <h1 class="text-2xl font-bold mb-6 text-cyan-400">⚡ Create Account</h1>
+        <body class="min-h-screen flex items-center justify-center">
+            <div class="card p-8 rounded-2xl max-w-md w-full">
+                <h1 class="text-2xl font-bold mb-6 text-white">Create Account</h1>
                 <form method="POST">
-                    <input type="text" name="username" placeholder="Username" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 mb-4 focus:border-cyan-500">
-                    <input type="password" name="password" placeholder="Password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 mb-4 focus:border-cyan-500">
-                    <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-700 py-2 rounded-lg font-semibold">Sign Up</button>
+                    <input type="text" name="username" placeholder="Username" class="input-dark mb-4" />
+                    <input type="password" name="password" placeholder="Password" class="input-dark mb-4" />
+                    <button type="submit" class="btn-primary">Sign Up</button>
                 </form>
-                <p class="text-sm text-gray-500 mt-4">Already have an account? <a href="/login" class="text-cyan-400">Log in</a></p>
+                <div class="relative my-6">
+                    <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-[#1a1a1a]"></div></div>
+                    <div class="relative flex justify-center text-xs"><span class="bg-[#0a0a0a] px-2 text-[#4b5563]">OR</span></div>
+                </div>
+                <div class="space-y-3">
+                    <a href="#" class="btn-social">🔵 Sign up with Google</a>
+                    <a href="#" class="btn-social">⚫ Sign up with GitHub</a>
+                </div>
+                <p class="text-sm text-[#4b5563] mt-4">Already have an account? <a href="/login" class="text-[#3b82f6] hover:underline">Log in</a></p>
             </div>
         </body>
         </html>
@@ -317,6 +330,7 @@ def signup():
 
 @app.route("/login", methods=['GET', 'POST'])
 def login():
+    error = None
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
@@ -327,23 +341,44 @@ def login():
             session.permanent = True
             flash('Logged in successfully.')
             return redirect(url_for('dashboard'))
-        flash('Invalid username or password.')
-        return redirect(url_for('login'))
-    return '''
+        else:
+            error = 'Invalid username or password. Please try again.'
+    # Professional login page with error message and "No account?" link
+    error_html = f'<p class="text-red-400 text-sm mb-4">{error}</p>' if error else ''
+    return f'''
         <!DOCTYPE html>
         <html>
         <head><title>Aegis - Log In</title>
         <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+            body {{ background: #000000; }}
+            .card {{ background: #0a0a0a; border: 1px solid #1a1a1a; }}
+            .input-dark {{ background: #000000; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; }}
+            .input-dark:focus {{ outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }}
+            .btn-primary {{ background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }}
+            .btn-primary:hover {{ background: #2563eb; }}
+            .btn-social {{ background: #1a1a1a; border: 1px solid #2a2a2a; color: white; font-weight: 500; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; display: block; text-align: center; }}
+            .btn-social:hover {{ background: #2a2a2a; border-color: #3b82f6; }}
+        </style>
         </head>
-        <body class="bg-gray-950 text-white min-h-screen flex items-center justify-center">
-            <div class="bg-gray-900 p-8 rounded-2xl border border-gray-800 max-w-md w-full">
-                <h1 class="text-2xl font-bold mb-6 text-cyan-400">⚡ Log In</h1>
+        <body class="min-h-screen flex items-center justify-center">
+            <div class="card p-8 rounded-2xl max-w-md w-full">
+                <h1 class="text-2xl font-bold mb-6 text-white">Log In</h1>
+                {error_html}
                 <form method="POST">
-                    <input type="text" name="username" placeholder="Username" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 mb-4 focus:border-cyan-500">
-                    <input type="password" name="password" placeholder="Password" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 mb-4 focus:border-cyan-500">
-                    <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-700 py-2 rounded-lg font-semibold">Log In</button>
+                    <input type="text" name="username" placeholder="Username" class="input-dark mb-4" />
+                    <input type="password" name="password" placeholder="Password" class="input-dark mb-4" />
+                    <button type="submit" class="btn-primary">Log In</button>
                 </form>
-                <p class="text-sm text-gray-500 mt-4">No account? <a href="/signup" class="text-cyan-400">Sign up</a></p>
+                <div class="relative my-6">
+                    <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-[#1a1a1a]"></div></div>
+                    <div class="relative flex justify-center text-xs"><span class="bg-[#0a0a0a] px-2 text-[#4b5563]">OR</span></div>
+                </div>
+                <div class="space-y-3">
+                    <a href="#" class="btn-social">🔵 Sign in with Google</a>
+                    <a href="#" class="btn-social">⚫ Sign in with GitHub</a>
+                </div>
+                <p class="text-sm text-[#4b5563] mt-4">No account? <a href="/signup" class="text-[#3b82f6] hover:underline">Create one</a></p>
             </div>
         </body>
         </html>
@@ -497,6 +532,7 @@ def dashboard():
         return redirect(url_for('dashboard'))
     
     html = load_html('dashboard.html')
+    # Inject dynamic values
     html = html.replace('value="deepseek"', f'value="{user[3]}" selected' if user[3] == 'deepseek' else 'value="deepseek"')
     html = html.replace('placeholder="owner/repo"', f'value="{user[5] or ""}"')
     html = html.replace('placeholder="sk-..."', f'value="{user[4] or ""}"')
