@@ -103,14 +103,9 @@ def get_full_file_content(repo, file_path, branch_name):
 # 2. FIX 2: MULTI-FILE CASCADE EFFECT (Impact Radius)
 # ============================================================
 def scan_impact_radius(repo, func_name, branch_name):
-    """
-    Scan the entire repository for files that import or call the changed function.
-    Returns a list of {file: context} mappings.
-    """
     impact = []
     try:
         contents = repo.get_contents("", ref=branch_name)
-        # Recursively traverse directories (simplified depth-first)
         def traverse(items):
             for item in items:
                 if item.type == 'dir':
@@ -150,7 +145,7 @@ def is_migration_file(file_path):
     return False
 
 # ============================================================
-# 4. MAIN ANALYZER
+# 4. MAIN ANALYZER (ALL RETURNS ARE INSIDE FUNCTIONS)
 # ============================================================
 def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str = None, repo=None, pr=None, team_rules: str = None) -> dict:
     extracted = extract_changed_functions(diff_text)
@@ -222,7 +217,6 @@ def test_discount_edge_cases():
         else:
             mock_instructions = "**Mocking Strategy:** Use `mocker.patch` for all external dependencies."
 
-        # Build Impact Radius Warning
         impact_warning = ""
         if impact_radius:
             impact_warning = f"""
