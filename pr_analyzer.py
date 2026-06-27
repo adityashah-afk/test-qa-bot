@@ -213,7 +213,7 @@ This function is used in {len(impact_radius)} other file(s) in this repository.
 """
 
         prompt = f"""
-        Write pytest tests for this function:**Context (Surrounding code):**
+Write pytest tests for this function:**Context (Surrounding code):**
 {extracted['context']}
 
 **Imports (use these):**
@@ -232,17 +232,17 @@ This function is used in {len(impact_radius)} other file(s) in this repository.
 - Ensure tests are deterministic and do NOT hit external APIs.
 - Focus on edge cases: negative values, zeroes, nulls, and boundary conditions.
 """
-return engine.llm.generate(prompt)
+        return engine.llm.generate(prompt)
 
-# Now assign the enhanced function to the engine
-engine.generate_test = enhanced_generate
+    # Now assign the enhanced function to the engine
+    engine.generate_test = enhanced_generate
 
-passed, final_code, diff_string = engine.run_full_loop()
+    passed, final_code, diff_string = engine.run_full_loop()
 
-brand_footprint = "\n\n---\n🛡️ *Fixed automatically by [Aegis](https://test-qa-bot-production.up.railway.app)*"
-return {
-'success': passed,
-'fixed_code': final_code,
-'diff_output': diff_string + brand_footprint,
-'message': 'Analysis complete.'
-}
+    brand_footprint = "\n\n---\n🛡️ *Fixed automatically by [Aegis](https://test-qa-bot-production.up.railway.app)*"
+    return {
+        'success': passed,
+        'fixed_code': final_code,
+        'diff_output': diff_string + brand_footprint,
+        'message': 'Analysis complete.'
+    }
