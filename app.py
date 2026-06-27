@@ -267,12 +267,11 @@ except Exception as e:
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
 
 def verify_signature(payload_body, signature_header):
-if not signature_header or not GITHUB_SECRET:
-    return False
-hash_object = hmac.new(GITHUB_SECRET.encode('utf-8'), msg=payload_body, digestmod=hashlib.sha256)
-expected = "sha256=" + hash_object.hexdigest()
-return hmac.compare_digest(expected, signature_header)
-
+    if not signature_header or not GITHUB_SECRET:
+        return False
+    hash_object = hmac.new(GITHUB_SECRET.encode('utf-8'), msg=payload_body, digestmod=hashlib.sha256)
+    expected = "sha256=" + hash_object.hexdigest()
+    return hmac.compare_digest(expected, signature_header)
 @app.route("/health", methods=["GET"])
 def health_check():
 return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
