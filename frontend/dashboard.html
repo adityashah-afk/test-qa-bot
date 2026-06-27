@@ -9,51 +9,22 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
         * { font-family: 'Inter', sans-serif; }
         body { background: #000000; }
-        .card-dark {
-            background: #0a0a0a;
-            border: 1px solid #1a1a1a;
-            border-radius: 0.75rem;
-            padding: 1.5rem;
-            transition: all 0.2s ease;
-        }
+        .card-dark { background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 0.75rem; padding: 1.5rem; transition: all 0.2s ease; }
         .card-dark:hover { border-color: #2a2a2a; }
-        .input-dark {
-            background: #0a0a0a;
-            border: 1px solid #1a1a1a;
-            color: #e5e7eb;
-            padding: 0.75rem 1rem;
-            border-radius: 0.5rem;
-            width: 100%;
-            transition: all 0.2s ease;
-        }
-        .input-dark:focus {
-            outline: none;
-            border-color: #3b82f6;
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-        }
+        .input-dark { background: #0a0a0a; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; transition: all 0.2s ease; }
+        .input-dark:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
         .input-dark::placeholder { color: #4b5563; }
-        .btn-primary {
-            background: #3b82f6;
-            color: white;
-            font-weight: 600;
-            padding: 0.75rem 1.5rem;
-            border-radius: 0.5rem;
-            transition: all 0.2s ease;
-        }
+        .btn-primary { background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem 1.5rem; border-radius: 0.5rem; transition: all 0.2s ease; }
         .btn-primary:hover { background: #2563eb; }
-        .btn-secondary {
-            background: transparent;
-            color: #9ca3af;
-            border: 1px solid #1a1a1a;
-            font-weight: 500;
-            padding: 0.75rem 1.5rem;
-            border-radius: 0.5rem;
-            transition: all 0.2s ease;
-        }
+        .btn-secondary { background: transparent; color: #9ca3af; border: 1px solid #1a1a1a; font-weight: 500; padding: 0.75rem 1.5rem; border-radius: 0.5rem; transition: all 0.2s ease; }
         .btn-secondary:hover { border-color: #3b82f6; color: white; }
         .text-muted { color: #6b7280; }
         select option { background: #0a0a0a; }
-        /* Datalist styling doesn't change much, but the input itself handles it well */
+        .referral-input { background: #0a0a0a; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; flex: 1; min-width: 0; }
+        .referral-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
+        .referral-input::placeholder { color: #4b5563; }
+        .flex-1 { flex: 1; }
+        textarea.input-dark { resize: vertical; min-height: 80px; }
     </style>
 </head>
 <body class="text-white min-h-screen">
@@ -70,6 +41,7 @@
     </nav>
 
     <main class="max-w-7xl mx-auto px-6 py-12">
+        <!-- Header -->
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
             <div>
                 <h1 class="text-3xl md:text-4xl font-bold text-white">Dashboard</h1>
@@ -81,6 +53,34 @@
             </div>
         </div>
 
+        <!-- ============================================================
+        ROI REPORT BANNER (The "Value Bomb")
+        ============================================================ -->
+        <div class="card-dark mb-8 border border-green-500/20 bg-green-500/5">
+            <h2 class="text-xl font-bold text-green-400">🛡️ Your 14-Day Audit Summary</h2>
+            <p class="text-[#6b7280] text-sm">Your trial ends in <span class="text-white font-bold">{{ days_left }}</span> days.</p>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                <div>
+                    <p class="text-2xl font-bold text-white">{{ pr_count }}</p>
+                    <p class="text-xs text-[#6b7280]">PRs Monitored</p>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-white">{{ bug_count }}</p>
+                    <p class="text-xs text-[#6b7280]">Bugs Caught</p>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-white">{{ time_saved }}h</p>
+                    <p class="text-xs text-[#6b7280]">Manual Testing Saved</p>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-green-400">${{ money_saved }}</p>
+                    <p class="text-xs text-[#6b7280]">Budget Saved</p>
+                </div>
+            </div>
+            <p class="text-sm text-[#4b5563] mt-4">⚡ <span class="text-white">Upgrade to Team</span> before the trial ends to keep saving!</p>
+        </div>
+
+        <!-- Billing & GitHub Cards -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             <div class="card-dark">
                 <p class="text-[#6b7280] text-sm">Billing</p>
@@ -94,6 +94,18 @@
                 <p class="text-xl font-bold mt-1 text-white">GitHub Status: Not Connected</p>
                 <a href="/github-oauth/authorize" class="inline-block mt-4 btn-secondary text-sm">Connect GitHub</a>
             </div>
+        </div>
+
+        <!-- Referral Section -->
+        <div class="card-dark mb-8 border border-[#1a1a1a]">
+            <h2 class="text-xl font-semibold text-white">🚀 Referral Program</h2>
+            <p class="text-[#6b7280] text-sm mt-1">Share your link and earn perks!</p>
+            <div class="mt-4 flex flex-col sm:flex-row items-center gap-4">
+                <input type="text" value="{{ referral_link }}" id="referralInput" class="referral-input w-full sm:flex-1" readonly />
+                <button onclick="copyReferral()" class="btn-primary text-sm w-full sm:w-auto whitespace-nowrap">Copy Link</button>
+            </div>
+            <p class="text-sm text-[#4b5563] mt-3">You've referred <span class="text-white font-bold">{{ referral_count }}</span> developers.</p>
+            <p class="text-xs text-[#4b5563] mt-1">Share this link with your network. When they sign up, you get credit!</p>
         </div>
 
         <!-- Settings Form -->
@@ -118,16 +130,10 @@
                     <p class="text-xs text-[#4b5563] mt-1">🔒 Your key is stored encrypted. We never see your data.</p>
                 </div>
 
-                <!-- ============================================================
-                UPGRADED: Datalist Dropdown (Shows all models + allows custom typing)
-                ============================================================ -->
                 <div class="mb-6">
                     <label class="block text-sm font-medium text-[#6b7280] mb-2">Model</label>
-                    <input type="text" name="model" class="input-dark" list="model-suggestions" placeholder="e.g. gpt-4o, claude-3-5-sonnet, deepseek-reasoner..." />
-                    
-                    <!-- The Data List (Dropdown Options) -->
+                    <input type="text" name="model" class="input-dark" list="model-suggestions" placeholder="e.g. gpt-4o, claude-3-5-sonnet..." />
                     <datalist id="model-suggestions">
-                        <!-- OpenAI -->
                         <option value="gpt-4o">OpenAI: GPT-4o</option>
                         <option value="gpt-4o-mini">OpenAI: GPT-4o-mini</option>
                         <option value="o1-preview">OpenAI: o1-preview</option>
@@ -135,21 +141,13 @@
                         <option value="gpt-4-turbo">OpenAI: GPT-4 Turbo</option>
                         <option value="gpt-4">OpenAI: GPT-4 (Legacy)</option>
                         <option value="gpt-3.5-turbo">OpenAI: GPT-3.5 Turbo</option>
-                        
-                        <!-- Anthropic -->
                         <option value="claude-3-5-sonnet-20240620">Anthropic: Claude 3.5 Sonnet</option>
                         <option value="claude-3-opus-20240229">Anthropic: Claude 3 Opus</option>
                         <option value="claude-3-sonnet-20240229">Anthropic: Claude 3 Sonnet</option>
                         <option value="claude-3-haiku-20240307">Anthropic: Claude 3 Haiku</option>
-                        
-                        <!-- DeepSeek -->
                         <option value="deepseek-chat">DeepSeek: DeepSeek Chat</option>
                         <option value="deepseek-reasoner">DeepSeek: DeepSeek Reasoner</option>
-                        
-                        <!-- Grok -->
                         <option value="grok-beta">Grok: Grok Beta</option>
-                        
-                        <!-- Custom / Open Source -->
                         <option value="llama3">Custom: Llama 3</option>
                         <option value="mistral">Custom: Mistral</option>
                         <option value="phi3">Custom: Phi-3</option>
@@ -157,11 +155,7 @@
                         <option value="gemma">Custom: Gemma</option>
                         <option value="qwen">Custom: Qwen</option>
                     </datalist>
-
-                    <p class="text-xs text-[#4b5563] mt-1">
-                        💡 <span class="text-white">Click to select</span> from the list above, or 
-                        <span class="text-white">type anything</span> to use a custom/unlisted model (e.g., your own Azure deployment name or a future GPT-5).
-                    </p>
+                    <p class="text-xs text-[#4b5563] mt-1">💡 Click to select or type anything for a custom model.</p>
                 </div>
 
                 <div class="mb-6">
@@ -174,6 +168,29 @@
             </form>
         </div>
 
+        <!-- Team Settings -->
+        <div class="card-dark mt-8 border border-[#1a1a1a]">
+            <h2 class="text-xl font-semibold text-white">🏢 Team Settings</h2>
+            <p class="text-[#6b7280] text-sm mt-1">Manage your organization's shared settings (Team Plan).</p>
+            <form method="POST" action="/team-settings" class="mt-4">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-[#6b7280] mb-2">Shared API Key (Team)</label>
+                    <input type="password" name="org_api_key" class="input-dark" placeholder="sk-..." />
+                    <p class="text-xs text-[#4b5563] mt-1">🔒 This key will be used for all team members.</p>
+                </div>
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-[#6b7280] mb-2">Team Testing Rules</label>
+                    <textarea name="testing_rules" class="input-dark" rows="3" placeholder="e.g., Always test for race conditions, memory leaks, and security vulnerabilities."></textarea>
+                    <p class="text-xs text-[#4b5563] mt-1">⚙️ These rules will be injected into every AI prompt for your team.</p>
+                </div>
+                <button type="submit" class="btn-primary w-full">Save Team Settings</button>
+            </form>
+            <div class="mt-4">
+                <p class="text-sm text-[#4b5563]">📊 <a href="/audit-logs" class="text-[#3b82f6] hover:underline">View Audit Logs</a> (See who fixed what)</p>
+            </div>
+        </div>
+
+        <!-- Chatbot & Info -->
         <div class="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
             <div class="card-dark border-[#1a1a1a]">
                 <h2 class="text-xl font-semibold mb-2 text-white">💬 Chatbot</h2>
@@ -181,9 +198,7 @@
                 <p class="text-[#4b5563] text-xs mt-2">Example: <span class="text-[#3b82f6]">/ask Does this handle null values?</span></p>
             </div>
             <div class="card-dark border-[#1a1a1a]">
-                <p class="text-xs text-[#4b5563]">
-                    🔐 <span class="text-[#6b7280]">BYOK (Bring Your Own Key).</span> You pay AI providers directly. We never see your data.
-                </p>
+                <p class="text-xs text-[#4b5563]">🔐 <span class="text-[#6b7280]">BYOK (Bring Your Own Key).</span> You pay AI providers directly. We never see your data.</p>
             </div>
         </div>
     </main>
@@ -197,6 +212,16 @@
             </div>
         </div>
     </footer>
+
+    <script>
+        function copyReferral() {
+            const input = document.getElementById('referralInput');
+            input.select();
+            input.setSelectionRange(0, 99999);
+            document.execCommand('copy');
+            alert('✅ Referral link copied to clipboard!');
+        }
+    </script>
 
 </body>
 </html>
