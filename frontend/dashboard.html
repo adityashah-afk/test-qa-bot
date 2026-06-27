@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aegis - Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        * { font-family: 'Inter', sans-serif; }
+        .gradient-bg {
+            background: radial-gradient(ellipse at 50% 0%, #0f172a 0%, #020617 100%);
+        }
+        .accent-color {
+            color: #00f2fe;
+        }
+        .accent-bg {
+            background: #00f2fe;
+        }
+        .accent-bg:hover {
+            background: #0ea5e9;
+        }
+        .card-hover:hover {
+            transform: translateY(-2px);
+            transition: all 0.3s ease;
+        }
+        .border-glow {
+            border: 1px solid rgba(0, 242, 254, 0.1);
+        }
+        .border-glow:hover {
+            border-color: rgba(0, 242, 254, 0.4);
+        }
+    </style>
+</head>
+<body class="gradient-bg text-white min-h-screen">
+
+    <!-- Navigation -->
+    <nav class="max-w-7xl mx-auto px-6 py-6 flex justify-between items-center">
+        <div class="flex items-center space-x-2">
+            <span class="text-2xl font-bold text-cyan-400">⚡ Aegis</span>
+            <span class="text-xs bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-500/30">BETA</span>
+        </div>
+        <div class="flex space-x-4">
+            <a href="#" class="text-gray-400 hover:text-white transition">Settings</a>
+            <a href="#" class="text-gray-400 hover:text-white transition">Logout</a>
+        </div>
+    </nav>
+
+    <!-- Dashboard Main -->
+    <main class="max-w-7xl mx-auto px-6 py-12">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
+            <div>
+                <h1 class="text-3xl md:text-4xl font-bold">⚡ Dashboard</h1>
+                <p class="text-gray-400 mt-1">Welcome back! Your AI QA Engineer is active.</p>
+            </div>
+            <div class="mt-4 md:mt-0 flex items-center gap-2">
+                <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                <span class="text-sm text-gray-400">Bot Status: <span class="text-green-400 font-medium">Online</span></span>
+            </div>
+        </div>
+
+        <!-- Stats Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div class="bg-gray-900/50 p-6 rounded-2xl border border-gray-800 card-hover border-glow">
+                <p class="text-gray-400 text-sm">PRs Analyzed</p>
+                <p class="text-3xl font-bold mt-1 text-cyan-400">0</p>
+                <p class="text-gray-500 text-xs mt-1">This month</p>
+            </div>
+            <div class="bg-gray-900/50 p-6 rounded-2xl border border-gray-800 card-hover border-glow">
+                <p class="text-gray-400 text-sm">Bugs Found</p>
+                <p class="text-3xl font-bold mt-1 text-cyan-400">0</p>
+                <p class="text-gray-500 text-xs mt-1">Auto-healed</p>
+            </div>
+            <div class="bg-gray-900/50 p-6 rounded-2xl border border-gray-800 card-hover border-glow">
+                <p class="text-gray-400 text-sm">Time Saved</p>
+                <p class="text-3xl font-bold mt-1 text-cyan-400">0 hrs</p>
+                <p class="text-gray-500 text-xs mt-1">Estimated developer time</p>
+            </div>
+        </div>
+
+        <!-- Two Column Layout -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <!-- Settings Card -->
+            <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800">
+                <h2 class="text-xl font-semibold mb-6">⚙️ Settings</h2>
+                
+                <form>
+                    <!-- GitHub Connection -->
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">GitHub Repository</label>
+                        <div class="flex items-center gap-2">
+                            <input type="text" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2.5 text-gray-300 focus:border-cyan-500 focus:outline-none" placeholder="owner/repo" />
+                            <button type="button" class="bg-cyan-600 hover:bg-cyan-700 px-4 py-2.5 rounded-lg text-sm font-medium transition">Connect</button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1">Example: adityashah-afk/test-qa-bot</p>
+                    </div>
+
+                    <!-- LLM Provider -->
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">AI Provider</label>
+                        <select class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2.5 text-gray-300 focus:border-cyan-500 focus:outline-none">
+                            <option value="deepseek">DeepSeek (Recommended - Cheapest)</option>
+                            <option value="openai">OpenAI (GPT-4o-mini)</option>
+                            <option value="anthropic">Anthropic (Claude)</option>
+                            <option value="grok">Grok (xAI)</option>
+                            <option value="azure">Azure OpenAI</option>
+                        </select>
+                    </div>
+
+                    <!-- API Key -->
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">API Key</label>
+                        <input type="password" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2.5 text-gray-300 focus:border-cyan-500 focus:outline-none" placeholder="sk-..." />
+                        <p class="text-xs text-gray-500 mt-1">🔒 Your key is stored encrypted. We never see your data.</p>
+                    </div>
+
+                    <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-700 px-6 py-3 rounded-xl font-semibold transition shadow-lg shadow-cyan-600/20">
+                        💾 Save Settings
+                    </button>
+                </form>
+            </div>
+
+            <!-- Activity & Chatbot Info -->
+            <div class="space-y-6">
+                <!-- Recent Activity -->
+                <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800">
+                    <h2 class="text-xl font-semibold mb-4">📋 Recent Activity</h2>
+                    <div class="text-center py-8 text-gray-500">
+                        <p class="text-sm">No PRs analyzed yet.</p>
+                        <p class="text-xs mt-1">Open a Pull Request in your repo to see activity here.</p>
+                    </div>
+                </div>
+
+                <!-- Chatbot Info -->
+                <div class="bg-cyan-600/5 p-8 rounded-2xl border border-cyan-500/20">
+                    <h2 class="text-xl font-semibold mb-2 text-cyan-400">💬 Chatbot</h2>
+                    <p class="text-gray-400 text-sm leading-relaxed">
+                        Type <span class="text-white bg-gray-800 px-1.5 py-0.5 rounded border border-cyan-500/30 font-mono text-xs">/ask</span> on any Pull Request comment to ask Aegis questions about your code.
+                    </p>
+                    <p class="text-gray-500 text-xs mt-2">
+                        Example: <span class="text-cyan-400">/ask Does this handle null values?</span>
+                    </p>
+                </div>
+
+                <!-- BYOK Note -->
+                <div class="bg-gray-800/30 p-4 rounded-xl border border-gray-700 text-center">
+                    <p class="text-xs text-gray-500">
+                        🔐 <span class="text-gray-400">BYOK (Bring Your Own Key).</span> You pay AI providers directly. We never see your data.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-gray-800 py-8 mt-12">
+        <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center">
+            <p class="text-gray-500 text-sm">© 2026 Aegis. All rights reserved. ⚡</p>
+            <div class="flex space-x-6 mt-4 md:mt-0 text-gray-500 text-sm">
+                <a href="#" class="hover:text-cyan-400 transition">Privacy</a>
+                <a href="#" class="hover:text-cyan-400 transition">Terms</a>
+            </div>
+        </div>
+    </footer>
+
+</body>
+</html>
