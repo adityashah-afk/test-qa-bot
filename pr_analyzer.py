@@ -6,10 +6,6 @@ from ai_qa_engine import QAEngine
 
 logger = logging.getLogger(__name__)
 
-# ============================================================
-# HELPERS
-# ============================================================
-
 def get_import_context(full_content: str) -> dict:
     import_lines = [line for line in full_content.splitlines() if line.startswith(('import ', 'from '))]
     import_map = {}
@@ -140,9 +136,6 @@ def is_migration_file(file_path):
             return True
     return False
 
-# ============================================================
-# MAIN ANALYZER
-# ============================================================
 def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str = None, repo=None, pr=None, team_rules: str = None) -> dict:
     extracted = extract_changed_functions(diff_text)
     code_snippet = extracted['code']
@@ -152,7 +145,6 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
         logger.info("ℹ️ No Python functions detected.")
         return {'success': True, 'message': 'No functions detected.', 'diff_output': '', 'fixed_code': ''}
 
-    # Migration exclusion
     if repo and pr:
         for file in pr.get_files():
             if is_migration_file(file.filename):
@@ -163,7 +155,6 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
                     'fixed_code': None
                 }
 
-    # Fetch full file content
     full_content = None
     imports = []
     import_map = {}
@@ -180,22 +171,17 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
                     import_map = get_import_context(full_content)
                 break
 
-    # Local signatures
     if full_content:
         call_pattern = r'(\w+)\('
         called_funcs = re.findall(call_pattern, code_snippet)
         local_sigs = extract_local_function_signatures(full_content, called_funcs)
 
-    # Impact radius
     if repo and pr and func_name:
         impact_radius = scan_impact_radius(repo, func_name, pr.head.ref)
 
     logger.info(f"🧠 Analyzing optimized snippet ({len(code_snippet)} chars)...")
     engine = QAEngine(use_mock=use_mock, model_override=model_override)
     engine.load_code_from_string(code_snippet)
-
-    # Override generate_test to include extra context
-    original_generate = engine.generate_test
 
     def enhanced_generate(code_snippet):
         if use_mock:
@@ -246,8 +232,9 @@ This function is used in {len(impact_radius)} other file(s) in this repository.
 - Ensure tests are deterministic and do NOT hit external APIs.
 - Focus on edge cases: negative values, zeroes, nulls, and boundary conditions.
 """
-return engine.llm.generate(prompt)   # <-- This is INSIDE the function, properly indented.
+return engine.llm.generate(prompt)
 
+# Now assign the enhanced function to the engine
 engine.generate_test = enhanced_generate
 
 passed, final_code, diff_string = engine.run_full_loop()
