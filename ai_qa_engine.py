@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 AI QA ENGINE - Universal Provider Support
-Supports: OpenAI, Anthropic, DeepSeek, Grok, Azure, and any OpenAI-compatible API.
+Supports: OpenAI, Anthropic, DeepSeek, Grok, Azure, and ANY OpenAI-compatible endpoint.
 BYOK (Bring Your Own Key) - We never see your data.
 """
 
@@ -18,7 +18,6 @@ from typing import Tuple
 # ================================================================
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
 
-# Provider-specific API keys
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
@@ -27,26 +26,37 @@ AZURE_API_KEY = os.getenv("AZURE_API_KEY")
 AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
 
 # ================================================================
-# 2. Universal LLM Client
+# 2. Universal LLM Client (Supports Model Override)
 # ================================================================
 
 class LLMClient:
-    """Universal adapter for all LLM providers."""
+    """Universal adapter for all LLM providers with custom model support."""
     
-    def __init__(self):
+    def __init__(self, model_override: str = None):
         self.provider = LLM_PROVIDER
         self.client = None
-        self.model = None
+        self.model = model_override  # User-specified model (e.g., "claude-3-5-sonnet-20240620")
+        
+        # Default model fallback per provider
+        defaults = {
+            "openai": "gpt-4o-mini",
+            "anthropic": "claude-3-haiku-20240307",
+            "deepseek": "deepseek-chat",
+            "grok": "grok-beta",
+            "azure": "gpt-4o-mini",
+            "custom": "llama3"
+        }
+        
+        if not self.model:
+            self.model = defaults.get(self.provider, "gpt-4o-mini")
         
         if self.provider == "openai":
             from openai import OpenAI
             self.client = OpenAI(api_key=OPENAI_API_KEY)
-            self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
             
         elif self.provider == "anthropic":
             import anthropic
             self.client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-            self.model = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
             
         elif self.provider == "deepseek":
             from openai import OpenAI
@@ -54,7 +64,6 @@ class LLMClient:
                 api_key=DEEPSEEK_API_KEY,
                 base_url="https://api.deepseek.com/v1"
             )
-            self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
             
         elif self.provider == "grok":
             from openai import OpenAI
@@ -62,7 +71,6 @@ class LLMClient:
                 api_key=GROK_API_KEY,
                 base_url="https://api.x.ai/v1"
             )
-            self.model = os.getenv("GROK_MODEL", "grok-beta")
             
         elif self.provider == "azure":
             from openai import OpenAI
@@ -70,10 +78,17 @@ class LLMClient:
                 api_key=AZURE_API_KEY,
                 base_url=AZURE_ENDPOINT
             )
-            self.model = os.getenv("AZURE_MODEL", "gpt-4o-mini")
+            
+        elif self.provider == "custom":
+            from openai import OpenAI
+            custom_base = os.getenv("CUSTOM_BASE_URL", "http://localhost:11434/v1")
+            self.client = OpenAI(
+                api_key=os.getenv("CUSTOM_API_KEY", "ollama"),
+                base_url=custom_base
+            )
             
         else:
-            raise Exception(f"Unsupported provider: {self.provider}. Supported: openai, anthropic, deepseek, grok, azure")
+            raise Exception(f"Unsupported provider: {self.provider}. Supported: openai, anthropic, deepseek, grok, azure, custom")
         
         print(f"🧠 Using LLM Provider: {self.provider.upper()} (Model: {self.model})")
     
@@ -90,7 +105,7 @@ class LLMClient:
                 return response.content[0].text
             
             else:
-                # OpenAI-compatible providers (OpenAI, DeepSeek, Grok, Azure)
+                # OpenAI-compatible providers (OpenAI, DeepSeek, Grok, Azure, Custom)
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[{"role": "user", "content": prompt}],
@@ -132,9 +147,9 @@ def calculate_discount(price, discount_percent):
 MAX_RETRIES = 3
 
 class QAEngine:
-    def __init__(self, use_mock: bool = True):
+    def __init__(self, use_mock: bool = True, model_override: str = None):
         self.use_mock = use_mock
-        self.llm = None if use_mock else LLMClient()
+        self.llm = None if use_mock else LLMClient(model_override)
         self.original_code = ""
         self.current_code = ""
         self.test_code = ""
@@ -188,13 +203,12 @@ def test_discount_edge_cases():
         return self.llm.generate(prompt, temperature=0.4)
 
     def generate_diff(self, original: str, fixed: str) -> str:
-        """Generate a properly formatted diff with newlines."""
         diff = difflib.unified_diff(
             original.splitlines(keepends=True),
             fixed.splitlines(keepends=True),
             fromfile="Original",
             tofile="Fixed (AI)",
-            lineterm="\n",  # <-- FIXED: Ensures proper newline formatting
+            lineterm="\n",
         )
         return "".join(diff)
 

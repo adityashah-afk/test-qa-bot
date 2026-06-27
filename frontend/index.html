@@ -3,69 +3,126 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Aegis - The Shield for Your Code</title>
+    <title>Aegis - QA Engineer for AI Code</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
         * { font-family: 'Inter', sans-serif; }
         
-        /* Professional Dark Mode (Solid, like Vercel/Linear) */
+        /* Pure Black Background - Professional */
         .gradient-bg {
-            background: #0a0a0a;
+            background: #000000;
         }
         
-        /* Muted, trustworthy accent */
+        /* Subtle accent - no glow, no pulse */
         .accent-color {
-            color: #38bdf8;
+            color: #3b82f6;
         }
         .accent-bg {
-            background: #38bdf8;
+            background: #3b82f6;
         }
         .accent-bg:hover {
-            background: #0ea5e9;
+            background: #2563eb;
         }
         
-        /* No flickering, no glow */
-        .electric-glow {
-            text-shadow: none;
-            animation: none;
-        }
-        
-        /* No pulsing buttons */
-        .pulse-border {
-            animation: none;
-            box-shadow: none;
-        }
-        
-        /* Clean hover effects */
+        /* Clean card hover - no transformation, just subtle border */
         .card-hover:hover {
-            transform: translateY(-2px);
+            border-color: rgba(59, 130, 246, 0.3);
             transition: all 0.2s ease;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            border-color: rgba(56, 189, 248, 0.3);
         }
         .border-glow {
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
         .border-glow:hover {
-            border-color: rgba(56, 189, 248, 0.3);
+            border-color: rgba(59, 130, 246, 0.2);
+        }
+        
+        /* Remove all animations */
+        .electric-glow, .pulse-border {
+            animation: none;
+            text-shadow: none;
+            box-shadow: none;
         }
         
         /* Clean video placeholder */
         .video-placeholder {
-            background: #1a1a1a;
-            border: 1px solid #2a2a2a;
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
             transition: all 0.3s ease;
         }
         .video-placeholder:hover {
-            border-color: #38bdf8;
-            background: #1a1a1a;
+            border-color: #3b82f6;
         }
-        
+
         /* Scroll fix */
         html, body {
             height: 100%;
             overflow-y: auto;
+            background: #000000;
+        }
+        
+        /* Professional button style */
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+            font-weight: 600;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            transition: all 0.2s ease;
+        }
+        .btn-primary:hover {
+            background: #2563eb;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: transparent;
+            color: #9ca3af;
+            border: 1px solid #1a1a1a;
+            font-weight: 500;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            transition: all 0.2s ease;
+        }
+        .btn-secondary:hover {
+            border-color: #3b82f6;
+            color: white;
+        }
+        
+        /* Dashboard card styles */
+        .card-dark {
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            transition: all 0.2s ease;
+        }
+        .card-dark:hover {
+            border-color: #2a2a2a;
+        }
+        
+        /* Form input styles */
+        .input-dark {
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            color: #e5e7eb;
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            width: 100%;
+            transition: all 0.2s ease;
+        }
+        .input-dark:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        .input-dark::placeholder {
+            color: #4b5563;
+        }
+        
+        /* Remove icons from buttons for cleaner look */
+        .no-icon .icon {
+            display: none;
         }
     </style>
 </head>
@@ -74,78 +131,74 @@
     <!-- ============================================================
     NAVIGATION
     ============================================================ -->
-    <nav class="max-w-7xl mx-auto px-6 py-6 flex justify-between items-center">
+    <nav class="max-w-7xl mx-auto px-6 py-6 flex justify-between items-center border-b border-[#1a1a1a]">
         <div class="flex items-center space-x-2">
-            <span class="text-2xl font-bold text-cyan-400">⚡ Aegis</span>
-            <span class="text-xs bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-500/30">BETA</span>
+            <span class="text-2xl font-bold text-white">Aegis</span>
+            <span class="text-xs bg-[#1a1a1a] text-[#6b7280] px-2 py-0.5 rounded-full border border-[#2a2a2a]">BETA</span>
         </div>
-        <div class="hidden md:flex space-x-8 text-gray-400">
+        <div class="hidden md:flex space-x-8 text-[#6b7280]">
             <a href="#features" class="hover:text-white transition">Features</a>
             <a href="#pricing" class="hover:text-white transition">Pricing</a>
             <a href="#demo" class="hover:text-white transition">Demo</a>
         </div>
         <div class="flex space-x-4">
-            <a href="/login" class="text-gray-400 hover:text-white transition">Log In</a>
-            <a href="/signup" class="bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-medium transition shadow-lg shadow-cyan-600/20">Get Started</a>
+            <a href="/login" class="text-[#6b7280] hover:text-white transition">Log In</a>
+            <a href="/signup" class="bg-[#3b82f6] hover:bg-[#2563eb] px-4 py-2 rounded-lg text-sm font-medium transition">Get Started</a>
         </div>
     </nav>
 
     <!-- ============================================================
-    HERO SECTION
+    HERO SECTION (Clean, No Lightning)
     ============================================================ -->
-    <section class="max-w-7xl mx-auto px-6 pt-20 pb-32 text-center">
-        <div class="inline-block bg-cyan-500/10 text-cyan-300 px-4 py-1.5 rounded-full text-sm mb-6 border border-cyan-500/20">
-            ⚡ The Electric Shield for Your Codebase
+    <section class="max-w-7xl mx-auto px-6 pt-28 pb-32 text-center">
+        <div class="inline-block bg-[#1a1a1a] text-[#3b82f6] px-4 py-1.5 rounded-full text-sm mb-6 border border-[#2a2a2a]">
+            AI-Powered QA Engineer for GitHub
         </div>
-        <h1 class="text-5xl md:text-7xl font-extrabold leading-tight">
+        <h1 class="text-5xl md:text-7xl font-extrabold leading-tight text-white">
             Your AI writes code.<br />
-            <span class="text-cyan-400">Aegis protects it.</span>
+            <span class="text-[#3b82f6]">Aegis protects it.</span>
         </h1>
-        <p class="text-xl text-gray-400 max-w-2xl mx-auto mt-6 leading-relaxed">
-            Automatically catch bugs, generate edge-case tests, and unleash self-healing fixes 
-            <span class="text-white font-medium">before they strike production</span>. 
-            Your AI QA Guardian works 24/7 on every Pull Request.
+        <p class="text-xl text-[#6b7280] max-w-2xl mx-auto mt-6 leading-relaxed">
+            Automatically catch bugs, generate edge-case tests, and fix code 
+            <span class="text-white font-medium">before it ships</span>. 
+            Your AI QA Engineer works 24/7 on every Pull Request.
         </p>
         <div class="flex flex-col sm:flex-row justify-center gap-4 mt-10">
-            <a href="/signup" class="bg-cyan-600 hover:bg-cyan-700 px-8 py-4 rounded-xl text-lg font-semibold transition shadow-lg shadow-cyan-600/20">
-                ⚡ Start Free Trial
-            </a>
-            <a href="#demo" class="border border-gray-700 hover:border-gray-500 px-8 py-4 rounded-xl text-lg font-medium transition">
-                Watch Demo →
-            </a>
+            <a href="/signup" class="btn-primary text-lg shadow-lg shadow-[#3b82f6]/20">Start Free Trial</a>
+            <a href="#demo" class="btn-secondary text-lg">Watch Demo →</a>
         </div>
-        <div class="mt-6 text-sm text-gray-500">
+        <div class="mt-6 text-sm text-[#4b5563]">
             🔐 No credit card required • Free 14-day trial • BYOK (Bring Your Own Key) • Zero hidden costs
         </div>
 
         <!-- Demo Placeholder -->
-        <div id="demo" class="mt-16 max-w-4xl mx-auto">
+        <div id="demo" class="mt-20 max-w-4xl mx-auto">
             <div class="video-placeholder rounded-2xl p-2">
-                <div class="bg-gray-950 rounded-xl p-12 flex flex-col items-center justify-center min-h-[320px] border border-gray-800">
+                <div class="bg-[#0a0a0a] rounded-xl p-12 flex flex-col items-center justify-center min-h-[320px] border border-[#1a1a1a]">
                     <div class="text-6xl mb-4">🎥</div>
-                    <p class="text-xl text-gray-300 font-semibold">Demo Video Coming Soon</p>
-                    <p class="text-gray-500 mt-2 text-center max-w-md">
+                    <p class="text-xl text-white font-semibold">Demo Video Coming Soon</p>
+                    <p class="text-[#6b7280] mt-2 text-center max-w-md">
                         Watch Aegis catch a bug, fix it, and post the diff on GitHub in real-time.
                     </p>
-                    <div class="mt-6 flex items-center gap-3 text-sm text-gray-500">
+                    <div class="mt-6 flex items-center gap-3 text-sm text-[#4b5563]">
                         <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
                         <span>AI generated demo • 30 seconds</span>
                     </div>
                 </div>
             </div>
-            <p class="text-center text-gray-500 text-sm mt-3">
-                ⚡ See it in action: AI catches bug → fixes it → posts diff → all within 10 seconds
+            <p class="text-center text-[#4b5563] text-sm mt-3">
+                See it in action: AI catches bug → fixes it → posts diff → all within 10 seconds
             </p>
         </div>
 
         <!-- Diff Preview -->
-        <div class="mt-8 max-w-4xl mx-auto bg-gray-900/30 rounded-xl border border-cyan-900/20 p-4">
-            <div class="bg-gray-950 rounded-lg p-4 text-left font-mono text-sm text-green-400 overflow-x-auto border border-gray-800">
-                <span class="text-gray-500">--- Original</span><br />
-                <span class="text-cyan-400">+++ Fixed (Aegis)</span><br />
-                <span class="text-gray-500">@@ -1,4 +1,11 @@</span><br />
+        <div class="mt-10 max-w-4xl mx-auto bg-[#0a0a0a] rounded-xl border border-[#1a1a1a] p-4">
+            <div class="bg-[#000000] rounded-lg p-4 text-left font-mono text-sm text-green-400 overflow-x-auto border border-[#1a1a1a]">
+                <span class="text-[#4b5563]">--- Original</span><br />
+                <span class="text-[#3b82f6]">+++ Fixed (Aegis)</span><br />
+                <span class="text-[#4b5563]">@@ -1,4 +1,11 @@</span><br />
                 <span class="text-red-400">-    return final_price</span><br />
-                <span class="text-green-400">+    if price &lt; 0: return 0.0  ⚡</span><br />
+                <span class="text-green-400">+    if price &lt; 0: return 0.0</span><br />
                 <span class="text-green-400">+    if discount_percent &gt; 100: discount_percent = 100</span>
             </div>
         </div>
@@ -156,40 +209,41 @@
     ============================================================ -->
     <section id="features" class="max-w-7xl mx-auto px-6 py-24">
         <div class="text-center mb-16">
-            <p class="text-cyan-400 font-semibold">⚡ FEATURES</p>
-            <h2 class="text-4xl md:text-5xl font-bold mt-2">What does Aegis do?</h2>
-            <p class="text-gray-400 max-w-xl mx-auto mt-4">Your personal QA engineer that works 10x faster than a human.</p>
+            <p class="text-[#3b82f6] font-semibold">FEATURES</p>
+            <h2 class="text-4xl md:text-5xl font-bold mt-2 text-white">What does Aegis do?</h2>
+            <p class="text-[#6b7280] max-w-xl mx-auto mt-4">Your personal QA engineer that works 10x faster than a human.</p>
         </div>
+
         <div class="grid md:grid-cols-3 gap-8">
-            <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800 card-hover border-glow">
+            <div class="card-dark">
                 <div class="text-4xl mb-4">⚡</div>
-                <h3 class="text-xl font-bold">Lightning Tests</h3>
-                <p class="text-gray-400 mt-2 text-sm leading-relaxed">Reads your code and generates edge-case tests instantly. Catches bugs humans miss.</p>
+                <h3 class="text-xl font-bold text-white">Lightning Tests</h3>
+                <p class="text-[#6b7280] mt-2 text-sm leading-relaxed">Reads your code and generates edge-case tests instantly. Catches bugs humans miss.</p>
             </div>
-            <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800 card-hover border-glow">
+            <div class="card-dark">
                 <div class="text-4xl mb-4">🛡️</div>
-                <h3 class="text-xl font-bold">Self-Healing Fixes</h3>
-                <p class="text-gray-400 mt-2 text-sm leading-relaxed">When tests fail, the AI rewrites the code, re-runs the tests, and proves it works.</p>
+                <h3 class="text-xl font-bold text-white">Self-Healing Fixes</h3>
+                <p class="text-[#6b7280] mt-2 text-sm leading-relaxed">When tests fail, the AI rewrites the code, re-runs the tests, and proves it works.</p>
             </div>
-            <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800 card-hover border-glow">
+            <div class="card-dark">
                 <div class="text-4xl mb-4">💬</div>
-                <h3 class="text-xl font-bold">Oracle Chatbot</h3>
-                <p class="text-gray-400 mt-2 text-sm leading-relaxed">Type <span class="text-white bg-gray-800 px-1.5 py-0.5 rounded border border-cyan-500/30">/ask</span> on any PR. The AI scans the code and answers business logic questions.</p>
+                <h3 class="text-xl font-bold text-white">Oracle Chatbot</h3>
+                <p class="text-[#6b7280] mt-2 text-sm leading-relaxed">Type <span class="text-white bg-[#1a1a1a] px-1.5 py-0.5 rounded border border-[#2a2a2a]">/ask</span> on any PR. The AI scans the code and answers business logic questions.</p>
             </div>
-            <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800 card-hover border-glow">
+            <div class="card-dark">
                 <div class="text-4xl mb-4">🔐</div>
-                <h3 class="text-xl font-bold">BYOK (Zero Data Leak)</h3>
-                <p class="text-gray-400 mt-2 text-sm leading-relaxed">Use your own DeepSeek or OpenAI key. Your code never touches our servers.</p>
+                <h3 class="text-xl font-bold text-white">BYOK (Zero Data Leak)</h3>
+                <p class="text-[#6b7280] mt-2 text-sm leading-relaxed">Use your own DeepSeek or OpenAI key. Your code never touches our servers.</p>
             </div>
-            <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800 card-hover border-glow">
+            <div class="card-dark">
                 <div class="text-4xl mb-4">🌩️</div>
-                <h3 class="text-xl font-bold">CI/CD Native</h3>
-                <p class="text-gray-400 mt-2 text-sm leading-relaxed">Integrates directly with GitHub. Triggers automatically on every Pull Request.</p>
+                <h3 class="text-xl font-bold text-white">CI/CD Native</h3>
+                <p class="text-[#6b7280] mt-2 text-sm leading-relaxed">Integrates directly with GitHub. Triggers automatically on every Pull Request.</p>
             </div>
-            <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800 card-hover border-glow">
+            <div class="card-dark">
                 <div class="text-4xl mb-4">📊</div>
-                <h3 class="text-xl font-bold">Actionable Insights</h3>
-                <p class="text-gray-400 mt-2 text-sm leading-relaxed">Understand your team's code quality. See which functions are most bug-prone.</p>
+                <h3 class="text-xl font-bold text-white">Actionable Insights</h3>
+                <p class="text-[#6b7280] mt-2 text-sm leading-relaxed">Understand your team's code quality. See which functions are most bug-prone.</p>
             </div>
         </div>
     </section>
@@ -199,24 +253,24 @@
     ============================================================ -->
     <section class="max-w-7xl mx-auto px-6 py-24">
         <div class="text-center mb-16">
-            <p class="text-cyan-400 font-semibold">⚡ HOW IT WORKS</p>
-            <h2 class="text-4xl md:text-5xl font-bold mt-2">Zero setup. Instant protection.</h2>
+            <p class="text-[#3b82f6] font-semibold">HOW IT WORKS</p>
+            <h2 class="text-4xl md:text-5xl font-bold mt-2 text-white">Zero setup. Instant value.</h2>
         </div>
         <div class="grid md:grid-cols-3 gap-12 text-center">
             <div>
-                <div class="w-16 h-16 bg-cyan-600/20 rounded-full flex items-center justify-center text-2xl font-bold text-cyan-400 mx-auto border border-cyan-500/30">1</div>
-                <h3 class="text-xl font-bold mt-4">Connect GitHub</h3>
-                <p class="text-gray-400 text-sm mt-2">Install the app or add a webhook to your repo in 30 seconds.</p>
+                <div class="w-16 h-16 bg-[#1a1a1a] rounded-full flex items-center justify-center text-2xl font-bold text-[#3b82f6] mx-auto border border-[#2a2a2a]">1</div>
+                <h3 class="text-xl font-bold mt-4 text-white">Connect GitHub</h3>
+                <p class="text-[#6b7280] text-sm mt-2">Install the app or add a webhook to your repo in 30 seconds.</p>
             </div>
             <div>
-                <div class="w-16 h-16 bg-cyan-600/20 rounded-full flex items-center justify-center text-2xl font-bold text-cyan-400 mx-auto border border-cyan-500/30">2</div>
-                <h3 class="text-xl font-bold mt-4">Paste Your API Key</h3>
-                <p class="text-gray-400 text-sm mt-2">BYOK. Use DeepSeek (cheap) or OpenAI. We never see your data.</p>
+                <div class="w-16 h-16 bg-[#1a1a1a] rounded-full flex items-center justify-center text-2xl font-bold text-[#3b82f6] mx-auto border border-[#2a2a2a]">2</div>
+                <h3 class="text-xl font-bold mt-4 text-white">Paste Your API Key</h3>
+                <p class="text-[#6b7280] text-sm mt-2">BYOK. Use DeepSeek (cheap) or OpenAI. We never see your data.</p>
             </div>
             <div>
-                <div class="w-16 h-16 bg-cyan-600/20 rounded-full flex items-center justify-center text-2xl font-bold text-cyan-400 mx-auto border border-cyan-500/30">3</div>
-                <h3 class="text-xl font-bold mt-4">Open a PR</h3>
-                <p class="text-gray-400 text-sm mt-2">The shield rises. Aegis scans, tests, fixes, and posts the diff automatically.</p>
+                <div class="w-16 h-16 bg-[#1a1a1a] rounded-full flex items-center justify-center text-2xl font-bold text-[#3b82f6] mx-auto border border-[#2a2a2a]">3</div>
+                <h3 class="text-xl font-bold mt-4 text-white">Open a PR</h3>
+                <p class="text-[#6b7280] text-sm mt-2">Our AI analyzes your code, finds bugs, fixes them, and posts the diff automatically.</p>
             </div>
         </div>
     </section>
@@ -226,59 +280,59 @@
     ============================================================ -->
     <section id="pricing" class="max-w-7xl mx-auto px-6 py-24">
         <div class="text-center mb-16">
-            <p class="text-cyan-400 font-semibold">⚡ PRICING</p>
-            <h2 class="text-4xl md:text-5xl font-bold mt-2">Invest in your code quality.</h2>
-            <p class="text-gray-400 max-w-xl mx-auto mt-4">Zero hidden costs. You pay only for the software.</p>
+            <p class="text-[#3b82f6] font-semibold">PRICING</p>
+            <h2 class="text-4xl md:text-5xl font-bold mt-2 text-white">Invest in your code quality.</h2>
+            <p class="text-[#6b7280] max-w-xl mx-auto mt-4">Zero hidden costs. You pay only for the software.</p>
         </div>
         <div class="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-            <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800 text-center card-hover">
-                <h3 class="text-xl font-bold">Developer</h3>
-                <p class="text-4xl font-bold mt-4">$29 <span class="text-gray-400 text-lg font-normal">/mo</span></p>
-                <ul class="mt-6 space-y-3 text-gray-300 text-sm text-left">
+            <div class="card-dark text-center">
+                <h3 class="text-xl font-bold text-white">Developer</h3>
+                <p class="text-4xl font-bold mt-4 text-white">$29 <span class="text-[#6b7280] text-lg font-normal">/mo</span></p>
+                <ul class="mt-6 space-y-3 text-[#6b7280] text-sm text-left">
                     <li>✅ 1 user</li>
                     <li>✅ Unlimited PRs</li>
                     <li>✅ Auto-Heal Engine</li>
                     <li>✅ Oracle Chatbot (/ask)</li>
                     <li>✅ Mock Mode (No API key needed)</li>
                 </ul>
-                <a href="/signup" class="block mt-8 bg-cyan-600 hover:bg-cyan-700 px-6 py-3 rounded-lg font-medium transition shadow-lg shadow-cyan-600/20">Get Started</a>
+                <a href="/signup" class="block mt-8 btn-primary text-center">Get Started</a>
             </div>
-            <div class="bg-cyan-600/10 p-8 rounded-2xl border border-cyan-500/50 text-center card-hover relative shadow-xl shadow-cyan-600/5">
-                <span class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-cyan-600 text-white text-xs px-4 py-1 rounded-full border border-cyan-400/50">⚡ POPULAR</span>
-                <h3 class="text-xl font-bold">Team</h3>
-                <p class="text-4xl font-bold mt-4">$49 <span class="text-gray-400 text-lg font-normal">/mo</span></p>
-                <ul class="mt-6 space-y-3 text-gray-300 text-sm text-left">
+            <div class="card-dark text-center border-[#3b82f6]/30 relative">
+                <span class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-[#3b82f6] text-white text-xs px-4 py-1 rounded-full border border-[#2563eb]">POPULAR</span>
+                <h3 class="text-xl font-bold text-white">Team</h3>
+                <p class="text-4xl font-bold mt-4 text-white">$49 <span class="text-[#6b7280] text-lg font-normal">/mo</span></p>
+                <ul class="mt-6 space-y-3 text-[#6b7280] text-sm text-left">
                     <li>✅ Up to 10 users</li>
                     <li>✅ Everything in Developer</li>
                     <li>✅ Priority support</li>
                     <li>✅ Admin dashboard</li>
                     <li>✅ Slack notifications</li>
                 </ul>
-                <a href="/signup" class="block mt-8 bg-cyan-600 hover:bg-cyan-700 px-6 py-3 rounded-lg font-medium transition">⚡ Get Started</a>
+                <a href="/signup" class="block mt-8 btn-primary text-center">Get Started</a>
             </div>
-            <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800 text-center card-hover">
-                <h3 class="text-xl font-bold">Enterprise</h3>
-                <p class="text-4xl font-bold mt-4">Custom</p>
-                <ul class="mt-6 space-y-3 text-gray-300 text-sm text-left">
+            <div class="card-dark text-center">
+                <h3 class="text-xl font-bold text-white">Enterprise</h3>
+                <p class="text-4xl font-bold mt-4 text-white">Custom</p>
+                <ul class="mt-6 space-y-3 text-[#6b7280] text-sm text-left">
                     <li>✅ Unlimited users</li>
                     <li>✅ Everything in Team</li>
                     <li>✅ SOC2 / Compliance</li>
                     <li>✅ Private cloud deployment</li>
                     <li>✅ SSO / SAML</li>
                 </ul>
-                <a href="/signup" class="block mt-8 border border-gray-700 hover:border-cyan-500 hover:text-cyan-400 px-6 py-3 rounded-lg font-medium transition">Contact Sales</a>
+                <a href="/signup" class="block mt-8 btn-secondary text-center">Contact Sales</a>
             </div>
         </div>
-        <p class="text-center text-gray-500 text-sm mt-8">*You pay for AI tokens directly to OpenAI/DeepSeek (BYOK). We never charge per token.</p>
+        <p class="text-center text-[#4b5563] text-sm mt-8">*You pay for AI tokens directly to OpenAI/DeepSeek (BYOK). We never charge per token.</p>
     </section>
 
     <!-- ============================================================
     FOOTER
     ============================================================ -->
-    <footer class="border-t border-gray-800 py-12">
+    <footer class="border-t border-[#1a1a1a] py-12">
         <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center">
-            <p class="text-gray-500 text-sm">© 2026 Aegis. All rights reserved. ⚡</p>
-            <div class="flex space-x-6 mt-4 md:mt-0 text-gray-500 text-sm">
+            <p class="text-[#4b5563] text-sm">© 2026 Aegis. All rights reserved.</p>
+            <div class="flex space-x-6 mt-4 md:mt-0 text-[#4b5563] text-sm">
                 <a href="#" class="hover:text-white transition">Privacy</a>
                 <a href="#" class="hover:text-white transition">Terms</a>
                 <a href="#" class="hover:text-white transition">Support</a>
