@@ -8,11 +8,9 @@ import os
 import logging
 import sqlite3
 import hmac
-import json
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, redirect, url_for, session, flash, render_template_string
-from flask_session import Session
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
 import stripe
@@ -33,13 +31,19 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# 2. FLASK APP CONFIG
+# 2. FLASK APP CONFIG (Fixed Session - No Flask-Session)
 # ============================================================
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', secrets.token_hex(32))
-app.config['SESSION_TYPE'] = 'filesystem'
-app.config['SESSION_PERMANENT'] = False
-Session(app)
+
+# Secret key for signing cookies (set this in Railway env)
+app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(32))
+app.config['SESSION_COOKIE_NAME'] = 'aegis_session'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SECURE'] = True   # Railway uses HTTPS
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
+app.config['SESSION_TYPE'] = 'null'  # Disable Flask-Session fallback
+app.config['SESSION_PERMANENT'] = True
 
 # ============================================================
 # 3. STRIPE CONFIG
@@ -64,7 +68,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Users table with new fields
+    # Users table
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,7 +77,7 @@ def init_db():
             provider TEXT DEFAULT 'deepseek',
             api_key TEXT,
             repo_name TEXT,
-            github_token TEXT,  -- OAuth token
+            github_token TEXT,
             stripe_customer_id TEXT,
             subscription_id TEXT,
             subscription_status TEXT DEFAULT 'inactive',
@@ -149,7 +153,7 @@ def get_user_by_github_repo(repo_name):
     return user
 
 # ============================================================
-# 7. WEBHOOK (Uses OAuth token if available)
+# 7. WEBHOOK
 # ============================================================
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
 
@@ -178,11 +182,9 @@ def webhook():
     if event == "ping":
         return jsonify({"msg": "pong"}), 200
 
-    # Find user by repo
     user = get_user_by_github_repo(repo_name)
     if not user:
         logger.warning(f"No user found for repo {repo_name}, falling back to env tokens.")
-        # Fallback to env (Mock Mode)
         user = None
 
     # --- Chatbot ---
@@ -194,12 +196,10 @@ def webhook():
             logger.info(f"💬 Chatbot triggered on PR #{pr_number} in {repo_name}")
             question = comment_body.replace("/ask", "").strip() or "What does this code do?"
             try:
-                # Override env for this request if user exists
                 if user:
-                    os.environ['LLM_PROVIDER'] = user[3]  # provider
+                    os.environ['LLM_PROVIDER'] = user[3]
                     os.environ['OPENAI_API_KEY'] = user[4] or ""
                     os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
-                
                 diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
                 answer = ask_question_about_code(question, diff_content)
                 post_comment(repo, pr_number, f"🤖 **AI Chatbot:**\n\n{answer}")
@@ -219,7 +219,6 @@ def webhook():
                 os.environ['LLM_PROVIDER'] = user[3]
                 os.environ['OPENAI_API_KEY'] = user[4] or ""
                 os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
-            
             diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
             api_key = user[4] if user else None
             use_mock = not api_key
@@ -247,7 +246,7 @@ def webhook():
     return jsonify({"msg": "Ignored"}), 200
 
 # ============================================================
-# 8. FRONTEND & DASHBOARD (OAuth & Stripe UI integrated)
+# 8. FRONTEND ROUTES (Login/Signup/Dashboard)
 # ============================================================
 def load_html(filename):
     path = os.path.join(os.path.dirname(__file__), 'frontend', filename)
@@ -312,6 +311,7 @@ def login():
         if user and check_password_hash(user[2], password):
             session['user_id'] = user[0]
             session['username'] = user[1]
+            session.permanent = True  # Make session persistent
             flash('Logged in successfully.')
             return redirect(url_for('dashboard'))
         flash('Invalid username or password.')
@@ -359,7 +359,6 @@ def github_oauth_callback():
         flash('Authorization failed.')
         return redirect(url_for('dashboard'))
 
-    # Exchange code for token
     resp = requests.post(
         GITHUB_OAUTH_URL,
         headers={'Accept': 'application/json'},
@@ -372,20 +371,13 @@ def github_oauth_callback():
 
     access_token = data['access_token']
     user_id = session['user_id']
-    
-    # Fetch GitHub username to display (optional)
-    headers = {'Authorization': f'token {access_token}'}
-    user_info = requests.get(GITHUB_USER_URL, headers=headers).json()
-    github_username = user_info.get('login', 'Unknown')
-
-    # Save token to user
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('UPDATE users SET github_token = ? WHERE id = ?', (access_token, user_id))
     conn.commit()
     conn.close()
 
-    flash(f'GitHub account "{github_username}" connected successfully!')
+    flash('GitHub account connected successfully!')
     return redirect(url_for('dashboard'))
 
 # ============================================================
@@ -400,10 +392,8 @@ def create_checkout_session():
     if not user:
         return jsonify({"error": "User not found"}), 404
 
-    # Price IDs from Stripe Dashboard
     PRICE_IDS = {
         'monthly': os.getenv("STRIPE_PRICE_MONTHLY"),
-        'yearly': os.getenv("STRIPE_PRICE_YEARLY")  # Optional
     }
     price_id = PRICE_IDS.get('monthly')
     if not price_id:
@@ -411,7 +401,7 @@ def create_checkout_session():
 
     try:
         checkout_session = stripe.checkout.Session.create(
-            customer=user[7] or None,  # stripe_customer_id
+            customer=user[7] or None,
             payment_method_types=['card'],
             line_items=[{'price': price_id, 'quantity': 1}],
             mode='subscription',
@@ -437,16 +427,13 @@ def stripe_webhook():
 
     data_object = event['data']['object']
     
-    # Handle subscription events
     if event['type'] == 'checkout.session.completed':
         session_data = data_object
         customer_id = session_data['customer']
         subscription_id = session_data['subscription']
         user_id = int(session_data['metadata']['user_id'])
-        
-        # Fetch subscription details to get status
         sub = stripe.Subscription.retrieve(subscription_id)
-        status = sub.status  # 'active', 'past_due', etc.
+        status = sub.status
         update_subscription(user_id, customer_id, subscription_id, status)
         logger.info(f"Subscription {subscription_id} activated for user {user_id}")
 
@@ -454,7 +441,6 @@ def stripe_webhook():
         subscription = data_object
         customer_id = subscription['customer']
         status = subscription['status']
-        # Find user by customer_id
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute('UPDATE users SET subscription_status = ? WHERE stripe_customer_id = ?', (status, customer_id))
@@ -486,7 +472,6 @@ def dashboard():
         provider = request.form.get('provider')
         api_key = request.form.get('api_key')
         repo_name = request.form.get('repo_name')
-        
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute('''
@@ -498,23 +483,17 @@ def dashboard():
         flash('Settings saved!')
         return redirect(url_for('dashboard'))
     
-    # Load HTML and inject dynamic values
     html = load_html('dashboard.html')
-    # Basic string replacement for simplicity
     html = html.replace('value="deepseek"', f'value="{user[3]}" selected' if user[3] == 'deepseek' else 'value="deepseek"')
     html = html.replace('placeholder="owner/repo"', f'value="{user[5] or ""}"')
     html = html.replace('placeholder="sk-..."', f'value="{user[4] or ""}"')
-    
-    # Update status badges
     sub_status = user[9] or 'inactive'
     if sub_status == 'active':
         html = html.replace('Billing Status: Inactive', 'Billing Status: ✅ Active')
     else:
         html = html.replace('Billing Status: Inactive', 'Billing Status: ❌ Inactive')
-    
     github_status = '✅ Connected' if user[6] else '❌ Not Connected'
     html = html.replace('GitHub Status: Not Connected', f'GitHub Status: {github_status}')
-    
     return html
 
 # ============================================================
