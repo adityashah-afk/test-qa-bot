@@ -247,10 +247,9 @@ def process_natural_language_change(instruction, diff_text, user):
     Apply the change and return ONLY the corrected code. Make sure the code is syntactically correct.
 """
 try:
-    fixed_code = llm.generate(prompt) if llm else current_code  # fallback to current if mock
+    fixed_code = llm.generate(prompt) if llm else current_code
     if use_mock:
-        # Mock mode: just return the same code (or a simple change)
-        fixed_code = current_code  # For mock, we don't have a real AI to change it.
+        fixed_code = current_code
     diff_output = engine.generate_diff(current_code, fixed_code)
     return {
         'success': True,
