@@ -382,20 +382,11 @@ def analyze_pr_diff_routed(diff_text, use_mock, model_override, repo, pr, team_r
 # ============================================================
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
 def verify_signature(payload_body, signature_header):
-    if not signature_header or not GITHUB_SECRET: return False
-    @app.route("/webhook", methods=["POST"])
-def webhook():
-    signature = request.headers.get("X-Hub-Signature-256")
-    if not verify_signature(request.data, signature):
-        logger.warning("Invalid signature")
-        return jsonify({"error": "Invalid signature"}), 401
-
-    event = request.headers.get("X-GitHub-Event")
-    payload = request.get_json()
-    repo_name = payload.get("repository", {}).get("full_name")
-
-    if event == "ping":
-        return jsonify({"msg": "pong"}), 200
+    if not signature_header or not GITHUB_SECRET:
+        return False
+    hash_object = hmac.new(GITHUB_SECRET.encode('utf-8'), msg=payload_body, digestmod=hashlib.sha256)
+    expected = "sha256=" + hash_object.hexdigest()
+    return hmac.compare_digest(expected, signature_header)
 
     user = get_user_by_github_repo(repo_name)
     if user and not is_trial_active(user):
@@ -702,16 +693,12 @@ def webhook():
         logger.warning("Invalid signature")
         return jsonify({"error": "Invalid signature"}), 401
 
-    except Exception as e:
-    logger.error(f"Error: {e}")
-    # Also log the diff for debugging
-    try:
-        logger.error(f"Diff preview: {diff_content[:500] if 'diff_content' in locals() else 'No diff'}")
-    except:
-        pass
-    return jsonify({"error": str(e)}), 500
+    event = request.headers.get("X-GitHub-Event")
+    payload = request.get_json()
+    repo_name = payload.get("repository", {}).get("full_name")
 
-    if event == "ping": return jsonify({"msg": "pong"}), 200
+    if event == "ping":
+        return jsonify({"msg": "pong"}), 200
 
     user = get_user_by_github_repo(repo_name)
     if user and not is_trial_active(user):
