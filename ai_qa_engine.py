@@ -13,6 +13,7 @@ import tempfile
 import re
 from pathlib import Path
 from typing import Tuple
+from security_guard import hybrid_security_scan  # Import the new security guard
 
 # ================================================================
 # 1. Environment Variables
@@ -140,23 +141,7 @@ def calculate_discount(price, discount_percent):
 # 4. Core QA Engine
 # ================================================================
 
-MAX_RETRIES = 3  # Safety limit to prevent infinite loops
-
-# ================================================================
-# SECURITY: Block dangerous code patterns
-# ================================================================
-DANGEROUS_PATTERNS = [
-    r"os\.system", r"subprocess\.", r"__import__", r"eval\(", r"exec\(", 
-    r"open\(", r"file\(", r"import\s+os", r"import\s+subprocess",
-    r"rm\s+-rf", r"dd\s+if=", r"dev\/null", r"pty\.spawn"
-]
-
-def is_code_safe(code: str) -> Tuple[bool, str]:
-    """Check if the code contains dangerous operations."""
-    for pattern in DANGEROUS_PATTERNS:
-        if re.search(pattern, code):
-            return False, f"Blocked dangerous pattern: {pattern}"
-    return True, "Safe"
+MAX_RETRIES = 3
 
 class QAEngine:
     def __init__(self, use_mock: bool = True, model_override: str = None):
@@ -166,7 +151,7 @@ class QAEngine:
         self.current_code = ""
         self.test_code = ""
         self.attempts = 0
-        self.attempt_history = []  # Track code hashes to detect loops
+        self.attempt_history = []
 
     def load_code_from_string(self, code: str):
         self.original_code = code
@@ -199,12 +184,12 @@ def test_discount_edge_cases():
 
     def run_test(self, test_code: str, source_code: str) -> Tuple[bool, str]:
         # ============================================================
-        # SECURITY: Scan before running
+        # SECURITY: Use the hybrid security scanner (AST + Regex)
         # ============================================================
-        safe, msg = is_code_safe(test_code)
+        safe, msg = hybrid_security_scan(test_code)
         if not safe:
-            return False, f"❌ Security violation: {msg}"
-        safe, msg = is_code_safe(source_code)
+            return False, f"❌ Security violation in test: {msg}"
+        safe, msg = hybrid_security_scan(source_code)
         if not safe:
             return False, f"❌ Security violation in source code: {msg}"
 
@@ -214,9 +199,6 @@ def test_discount_edge_cases():
             src_path.write_text(source_code)
             tst_path.write_text(test_code)
 
-            # ============================================================
-            # Run with a strict timeout (10 seconds) to prevent hanging
-            # ============================================================
             try:
                 result = subprocess.run(
                     [sys.executable, "-m", "pytest", str(tst_path), "--tb=short", "-v"],
@@ -228,19 +210,16 @@ def test_discount_edge_cases():
                 else:
                     return False, result.stdout + "\n" + result.stderr
             except subprocess.TimeoutExpired:
-                return False, "❌ Test timed out (10s). Potential infinite loop in test."
+                return False, "❌ Test timed out (10s). Potential infinite loop."
 
     def fix_code(self, error_log: str, current_code: str) -> str:
         if self.use_mock:
             return MOCK_FIXED_CODE
 
-        # ============================================================
-        # INFINITE LOOP DETECTION
-        # ============================================================
         code_hash = hash(current_code)
         if code_hash in self.attempt_history:
             print("🔄 Infinite loop detected! Returning original code.")
-            return current_code  # Stop fixing and return original to save money
+            return current_code
         
         self.attempt_history.append(code_hash)
 
@@ -280,6 +259,5 @@ def test_discount_edge_cases():
             
             self.current_code = self.fix_code(output, self.current_code)
         
-        # Fallback
         diff = self.generate_diff(self.original_code, self.current_code)
         return False, self.current_code, diff
