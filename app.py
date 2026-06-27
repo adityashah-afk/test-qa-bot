@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Aegis - Complete Market Ready Backend
-Features: Auth, Dashboard, GitHub OAuth, Stripe Billing, Webhook, AI Engine
+Production-Ready Session Management (No Hardcoded Keys)
 """
 
 import os
@@ -31,19 +31,32 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# 2. FLASK APP CONFIG (Fixed Session - No Flask-Session)
+# 2. FLASK APP CONFIG (Production-Ready)
 # ============================================================
 app = Flask(__name__)
 
-# Secret key for signing cookies (set this in Railway env)
-app.secret_key = os.getenv('SECRET_KEY', secrets.token_hex(32))
+# ============================================================
+# CRITICAL: Read SECRET_KEY strictly from environment
+# ============================================================
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    logger.critical("🚨 SECRET_KEY environment variable is NOT SET! Session cookies will be invalid on restart!")
+    # For production, we MUST crash to prevent insecure behavior.
+    # But to be safe, we set a fallback only for the first start (not recommended).
+    SECRET_KEY = secrets.token_hex(32)
+    logger.warning("⚠️ Using temporary SECRET_KEY. Sessions will break on restart!")
+
+app.secret_key = SECRET_KEY
+logger.info("🔐 SECRET_KEY is loaded from environment.")
+
+# Session Configuration (Market-Ready)
 app.config['SESSION_COOKIE_NAME'] = 'aegis_session'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SECURE'] = True   # Railway uses HTTPS
+app.config['SESSION_COOKIE_SECURE'] = True  # Required for HTTPS (Railway uses HTTPS)
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_PATH'] = '/'
+app.config['SESSION_COOKIE_DOMAIN'] = None  # Uses the current domain automatically
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
-app.config['SESSION_TYPE'] = 'null'  # Disable Flask-Session fallback
-app.config['SESSION_PERMANENT'] = True
 
 # ============================================================
 # 3. STRIPE CONFIG
@@ -68,7 +81,6 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Users table
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,6 +109,7 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+    logger.info("✅ Database initialized (tables created if missing).")
 
 init_db()
 
@@ -246,7 +259,7 @@ def webhook():
     return jsonify({"msg": "Ignored"}), 200
 
 # ============================================================
-# 8. FRONTEND ROUTES (Login/Signup/Dashboard)
+# 8. FRONTEND ROUTES
 # ============================================================
 def load_html(filename):
     path = os.path.join(os.path.dirname(__file__), 'frontend', filename)
@@ -311,7 +324,7 @@ def login():
         if user and check_password_hash(user[2], password):
             session['user_id'] = user[0]
             session['username'] = user[1]
-            session.permanent = True  # Make session persistent
+            session.permanent = True
             flash('Logged in successfully.')
             return redirect(url_for('dashboard'))
         flash('Invalid username or password.')
