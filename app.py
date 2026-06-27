@@ -11,6 +11,7 @@ import os
 import logging
 import sqlite3
 import hmac
+import hashlib
 import secrets
 import string
 from datetime import datetime, timedelta
