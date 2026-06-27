@@ -8,115 +8,192 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
         * { font-family: 'Inter', sans-serif; }
-        .gradient-bg { background: radial-gradient(ellipse at 50% 0%, #0f172a 0%, #020617 100%); }
-        .accent-color { color: #00f2fe; }
-        .accent-bg { background: #00f2fe; }
-        .accent-bg:hover { background: #0ea5e9; }
-        .card-hover:hover { transform: translateY(-2px); transition: all 0.3s ease; }
-        .border-glow { border: 1px solid rgba(0, 242, 254, 0.1); }
-        .border-glow:hover { border-color: rgba(0, 242, 254, 0.4); }
+        body { background: #000000; }
+        .card-dark {
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            transition: all 0.2s ease;
+        }
+        .card-dark:hover { border-color: #2a2a2a; }
+        .input-dark {
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            color: #e5e7eb;
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            width: 100%;
+            transition: all 0.2s ease;
+        }
+        .input-dark:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        .input-dark::placeholder { color: #4b5563; }
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+            font-weight: 600;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            transition: all 0.2s ease;
+        }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-secondary {
+            background: transparent;
+            color: #9ca3af;
+            border: 1px solid #1a1a1a;
+            font-weight: 500;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            transition: all 0.2s ease;
+        }
+        .btn-secondary:hover { border-color: #3b82f6; color: white; }
+        .text-muted { color: #6b7280; }
+        select option { background: #0a0a0a; }
+        /* Datalist styling doesn't change much, but the input itself handles it well */
     </style>
 </head>
-<body class="gradient-bg text-white min-h-screen">
+<body class="text-white min-h-screen">
 
-    <nav class="max-w-7xl mx-auto px-6 py-6 flex justify-between items-center">
+    <nav class="max-w-7xl mx-auto px-6 py-6 flex justify-between items-center border-b border-[#1a1a1a]">
         <div class="flex items-center space-x-2">
-            <span class="text-2xl font-bold text-cyan-400">⚡ Aegis</span>
-            <span class="text-xs bg-cyan-500/20 text-cyan-300 px-2 py-0.5 rounded-full border border-cyan-500/30">BETA</span>
+            <span class="text-2xl font-bold text-white">Aegis</span>
+            <span class="text-xs bg-[#1a1a1a] text-[#6b7280] px-2 py-0.5 rounded-full border border-[#2a2a2a]">BETA</span>
         </div>
         <div class="flex space-x-4">
-            <a href="#" class="text-gray-400 hover:text-white transition">Settings</a>
-            <a href="/logout" class="text-gray-400 hover:text-white transition">Logout</a>
+            <a href="#" class="text-[#6b7280] hover:text-white transition">Settings</a>
+            <a href="/logout" class="text-[#6b7280] hover:text-white transition">Logout</a>
         </div>
     </nav>
 
     <main class="max-w-7xl mx-auto px-6 py-12">
-        <!-- Header -->
         <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
             <div>
-                <h1 class="text-3xl md:text-4xl font-bold">⚡ Dashboard</h1>
-                <p class="text-gray-400 mt-1">Manage your AI QA Engineer.</p>
+                <h1 class="text-3xl md:text-4xl font-bold text-white">Dashboard</h1>
+                <p class="text-[#6b7280] mt-1">Manage your AI QA Engineer.</p>
             </div>
             <div class="mt-4 md:mt-0 flex items-center gap-2">
                 <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                <span class="text-sm text-gray-400">Status: <span class="text-green-400 font-medium">Online</span></span>
+                <span class="text-sm text-[#6b7280]">Status: <span class="text-green-400 font-medium">Online</span></span>
             </div>
         </div>
 
-        <!-- Status Cards -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-            <div class="bg-gray-900/50 p-6 rounded-2xl border border-gray-800">
-                <p class="text-gray-400 text-sm">Billing</p>
-                <p class="text-xl font-bold mt-1 text-cyan-400">Billing Status: Inactive</p>
+            <div class="card-dark">
+                <p class="text-[#6b7280] text-sm">Billing</p>
+                <p class="text-xl font-bold mt-1 text-white">Billing Status: Inactive</p>
                 <form action="/create-checkout-session" method="POST" class="mt-4">
-                    <button type="submit" class="bg-cyan-600 hover:bg-cyan-700 px-6 py-2 rounded-lg font-medium transition shadow-lg shadow-cyan-600/20 text-sm">
-                        💳 Subscribe ($29/mo)
-                    </button>
+                    <button type="submit" class="btn-primary text-sm">Subscribe ($29/mo)</button>
                 </form>
             </div>
-            <div class="bg-gray-900/50 p-6 rounded-2xl border border-gray-800">
-                <p class="text-gray-400 text-sm">GitHub Connection</p>
-                <p class="text-xl font-bold mt-1 text-cyan-400">GitHub Status: Not Connected</p>
-                <a href="/github-oauth/authorize" class="inline-block mt-4 bg-gray-800 hover:bg-gray-700 px-6 py-2 rounded-lg font-medium transition border border-gray-600 text-sm">
-                    🔗 Connect GitHub
-                </a>
+            <div class="card-dark">
+                <p class="text-[#6b7280] text-sm">GitHub Connection</p>
+                <p class="text-xl font-bold mt-1 text-white">GitHub Status: Not Connected</p>
+                <a href="/github-oauth/authorize" class="inline-block mt-4 btn-secondary text-sm">Connect GitHub</a>
             </div>
         </div>
 
         <!-- Settings Form -->
-        <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800">
-            <h2 class="text-xl font-semibold mb-6">⚙️ AI Settings</h2>
+        <div class="card-dark">
+            <h2 class="text-xl font-semibold mb-6 text-white">AI Settings</h2>
             <form method="POST">
                 <div class="mb-6">
-                    <label class="block text-sm font-medium text-gray-300 mb-2">AI Provider</label>
-                    <select name="provider" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2.5 text-gray-300 focus:border-cyan-500 focus:outline-none">
+                    <label class="block text-sm font-medium text-[#6b7280] mb-2">AI Provider</label>
+                    <select name="provider" class="input-dark">
                         <option value="deepseek">DeepSeek (Recommended - Cheapest)</option>
-                        <option value="openai">OpenAI (GPT-4o-mini)</option>
-                        <option value="anthropic">Anthropic (Claude)</option>
+                        <option value="openai">OpenAI (GPT-4o, 4o-mini, etc.)</option>
+                        <option value="anthropic">Anthropic (Claude 3.5 Sonnet, Opus, etc.)</option>
                         <option value="grok">Grok (xAI)</option>
                         <option value="azure">Azure OpenAI</option>
+                        <option value="custom">Custom (Ollama, Together AI, etc.)</option>
                     </select>
                 </div>
 
                 <div class="mb-6">
-                    <label class="block text-sm font-medium text-gray-300 mb-2">API Key</label>
-                    <input type="password" name="api_key" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2.5 text-gray-300 focus:border-cyan-500 focus:outline-none" placeholder="sk-..." />
-                    <p class="text-xs text-gray-500 mt-1">🔒 Your key is stored encrypted. We never see your data.</p>
+                    <label class="block text-sm font-medium text-[#6b7280] mb-2">API Key</label>
+                    <input type="password" name="api_key" class="input-dark" placeholder="sk-..." />
+                    <p class="text-xs text-[#4b5563] mt-1">🔒 Your key is stored encrypted. We never see your data.</p>
+                </div>
+
+                <!-- ============================================================
+                UPGRADED: Datalist Dropdown (Shows all models + allows custom typing)
+                ============================================================ -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-[#6b7280] mb-2">Model</label>
+                    <input type="text" name="model" class="input-dark" list="model-suggestions" placeholder="e.g. gpt-4o, claude-3-5-sonnet, deepseek-reasoner..." />
+                    
+                    <!-- The Data List (Dropdown Options) -->
+                    <datalist id="model-suggestions">
+                        <!-- OpenAI -->
+                        <option value="gpt-4o">OpenAI: GPT-4o</option>
+                        <option value="gpt-4o-mini">OpenAI: GPT-4o-mini</option>
+                        <option value="o1-preview">OpenAI: o1-preview</option>
+                        <option value="o1-mini">OpenAI: o1-mini</option>
+                        <option value="gpt-4-turbo">OpenAI: GPT-4 Turbo</option>
+                        <option value="gpt-4">OpenAI: GPT-4 (Legacy)</option>
+                        <option value="gpt-3.5-turbo">OpenAI: GPT-3.5 Turbo</option>
+                        
+                        <!-- Anthropic -->
+                        <option value="claude-3-5-sonnet-20240620">Anthropic: Claude 3.5 Sonnet</option>
+                        <option value="claude-3-opus-20240229">Anthropic: Claude 3 Opus</option>
+                        <option value="claude-3-sonnet-20240229">Anthropic: Claude 3 Sonnet</option>
+                        <option value="claude-3-haiku-20240307">Anthropic: Claude 3 Haiku</option>
+                        
+                        <!-- DeepSeek -->
+                        <option value="deepseek-chat">DeepSeek: DeepSeek Chat</option>
+                        <option value="deepseek-reasoner">DeepSeek: DeepSeek Reasoner</option>
+                        
+                        <!-- Grok -->
+                        <option value="grok-beta">Grok: Grok Beta</option>
+                        
+                        <!-- Custom / Open Source -->
+                        <option value="llama3">Custom: Llama 3</option>
+                        <option value="mistral">Custom: Mistral</option>
+                        <option value="phi3">Custom: Phi-3</option>
+                        <option value="mixtral">Custom: Mixtral</option>
+                        <option value="gemma">Custom: Gemma</option>
+                        <option value="qwen">Custom: Qwen</option>
+                    </datalist>
+
+                    <p class="text-xs text-[#4b5563] mt-1">
+                        💡 <span class="text-white">Click to select</span> from the list above, or 
+                        <span class="text-white">type anything</span> to use a custom/unlisted model (e.g., your own Azure deployment name or a future GPT-5).
+                    </p>
                 </div>
 
                 <div class="mb-6">
-                    <label class="block text-sm font-medium text-gray-300 mb-2">GitHub Repository</label>
-                    <input type="text" name="repo_name" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-2.5 text-gray-300 focus:border-cyan-500 focus:outline-none" placeholder="owner/repo" />
-                    <p class="text-xs text-gray-500 mt-1">Example: adityashah-afk/test-qa-bot</p>
+                    <label class="block text-sm font-medium text-[#6b7280] mb-2">GitHub Repository</label>
+                    <input type="text" name="repo_name" class="input-dark" placeholder="owner/repo" />
+                    <p class="text-xs text-[#4b5563] mt-1">Example: adityashah-afk/test-qa-bot</p>
                 </div>
 
-                <button type="submit" class="w-full bg-cyan-600 hover:bg-cyan-700 px-6 py-3 rounded-xl font-semibold transition shadow-lg shadow-cyan-600/20">
-                    💾 Save Settings
-                </button>
+                <button type="submit" class="btn-primary w-full">Save Settings</button>
             </form>
         </div>
 
-        <!-- Chatbot & Info -->
         <div class="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="bg-cyan-600/5 p-6 rounded-2xl border border-cyan-500/20">
-                <h2 class="text-xl font-semibold mb-2 text-cyan-400">💬 Chatbot</h2>
-                <p class="text-gray-400 text-sm">Type <span class="text-white bg-gray-800 px-1.5 py-0.5 rounded border border-cyan-500/30 font-mono text-xs">/ask</span> on any PR comment to ask Aegis questions about your code.</p>
-                <p class="text-gray-500 text-xs mt-2">Example: <span class="text-cyan-400">/ask Does this handle null values?</span></p>
+            <div class="card-dark border-[#1a1a1a]">
+                <h2 class="text-xl font-semibold mb-2 text-white">💬 Chatbot</h2>
+                <p class="text-[#6b7280] text-sm">Type <span class="text-white bg-[#1a1a1a] px-1.5 py-0.5 rounded border border-[#2a2a2a] font-mono text-xs">/ask</span> on any PR comment to ask Aegis questions about your code.</p>
+                <p class="text-[#4b5563] text-xs mt-2">Example: <span class="text-[#3b82f6]">/ask Does this handle null values?</span></p>
             </div>
-            <div class="bg-gray-800/30 p-6 rounded-2xl border border-gray-700">
-                <p class="text-xs text-gray-500">
-                    🔐 <span class="text-gray-400">BYOK (Bring Your Own Key).</span> You pay AI providers directly. We never see your data.
+            <div class="card-dark border-[#1a1a1a]">
+                <p class="text-xs text-[#4b5563]">
+                    🔐 <span class="text-[#6b7280]">BYOK (Bring Your Own Key).</span> You pay AI providers directly. We never see your data.
                 </p>
             </div>
         </div>
     </main>
 
-    <footer class="border-t border-gray-800 py-8 mt-12">
+    <footer class="border-t border-[#1a1a1a] py-8 mt-12">
         <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center">
-            <p class="text-gray-500 text-sm">© 2026 Aegis. All rights reserved. ⚡</p>
-            <div class="flex space-x-6 mt-4 md:mt-0 text-gray-500 text-sm">
-                <a href="#" class="hover:text-cyan-400 transition">Privacy</a>
-                <a href="#" class="hover:text-cyan-400 transition">Terms</a>
+            <p class="text-[#4b5563] text-sm">© 2026 Aegis. All rights reserved.</p>
+            <div class="flex space-x-6 mt-4 md:mt-0 text-[#4b5563] text-sm">
+                <a href="#" class="hover:text-white transition">Privacy</a>
+                <a href="#" class="hover:text-white transition">Terms</a>
             </div>
         </div>
     </footer>
