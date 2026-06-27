@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Aegis - Complete Market Ready Backend
-Includes 14-Day Trial Expiry Logic
+Includes: 14-Day Trial Expiry, Referral System, Try-It-Now Demo, Chatbot, Auto-Heal
 """
 
 import os
@@ -9,8 +9,9 @@ import logging
 import sqlite3
 import hmac
 import secrets
+import string
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, redirect, url_for, session, flash
+from flask import Flask, request, jsonify, redirect, url_for, session, flash, render_template_string
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
 import stripe
@@ -79,7 +80,9 @@ def init_db():
             subscription_status TEXT DEFAULT 'inactive',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             model TEXT DEFAULT '',
-            trial_expires_at TIMESTAMP  -- <-- NEW: 14-day trial expiry
+            trial_expires_at TIMESTAMP,
+            referral_code TEXT UNIQUE,
+            referred_by INTEGER
         )
     ''')
     c.execute('''
@@ -104,6 +107,16 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS referrals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_id INTEGER,
+            referred_user_id INTEGER,
+            referred_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (referrer_id) REFERENCES users (id),
+            FOREIGN KEY (referred_user_id) REFERENCES users (id)
+        )
+    ''')
     conn.commit()
     conn.close()
     logger.info("Database initialized.")
@@ -111,17 +124,28 @@ def init_db():
 def migrate_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    # Add model column if missing
+    # Add missing columns if needed
     try:
         c.execute("ALTER TABLE users ADD COLUMN model TEXT DEFAULT ''")
         conn.commit()
     except sqlite3.OperationalError:
         pass
-    # Add trial_expires_at column if missing
     try:
         c.execute("ALTER TABLE users ADD COLUMN trial_expires_at TIMESTAMP")
         conn.commit()
         logger.info("Added 'trial_expires_at' column.")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN referral_code TEXT UNIQUE")
+        conn.commit()
+        logger.info("Added 'referral_code' column.")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
+        conn.commit()
+        logger.info("Added 'referred_by' column.")
     except sqlite3.OperationalError:
         pass
     conn.close()
@@ -130,33 +154,26 @@ init_db()
 migrate_db()
 
 # ============================================================
-# Helper: Check if user's trial is active
+# Helpers
 # ============================================================
+def generate_referral_code():
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(8))
+
 def is_trial_active(user):
-    """Returns True if user can use the bot (trial not expired OR subscription active)."""
     if not user:
         return False
-    # If they have an active subscription, always allow
-    if user[9] == 'active':  # subscription_status is index 9
+    if user[9] == 'active':  # subscription_status
         return True
-    # Check trial expiry
     trial_expires_at = user[12] if len(user) > 12 else None
     if trial_expires_at:
         try:
             expiry = datetime.strptime(trial_expires_at, '%Y-%m-%d %H:%M:%S')
-            if datetime.utcnow() < expiry:
-                return True
-            else:
-                logger.warning(f"User {user[1]} trial expired on {expiry}")
-                return False
+            return datetime.utcnow() < expiry
         except:
-            return False  # If parsing fails, block access
-    # If no expiry set and no subscription, block (should not happen)
+            return False
     return False
 
-# ============================================================
-# Other Helpers
-# ============================================================
 def get_user(username):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -172,6 +189,29 @@ def get_user_by_id(user_id):
     user = c.fetchone()
     conn.close()
     return user
+
+def get_user_by_referral_code(code):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT * FROM users WHERE referral_code = ?', (code,))
+    user = c.fetchone()
+    conn.close()
+    return user
+
+def count_referrals(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM referrals WHERE referrer_id = ?', (user_id,))
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+def add_referral(referrer_id, referred_user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('INSERT INTO referrals (referrer_id, referred_user_id) VALUES (?, ?)', (referrer_id, referred_user_id))
+    conn.commit()
+    conn.close()
 
 def update_user_settings(user_id, provider=None, api_key=None, repo_name=None, github_token=None, model=None):
     conn = sqlite3.connect(DB_PATH)
@@ -241,7 +281,6 @@ def process_natural_language_change(instruction, diff_text, user):
     current_code = extract_changed_functions(diff_text)
     if not current_code:
         return {'success': False, 'error': 'No code detected in this PR.'}
-
     api_key = user[4] if user else None
     use_mock = not api_key
     model_override = user[11] if user and len(user) > 11 else None
@@ -249,7 +288,6 @@ def process_natural_language_change(instruction, diff_text, user):
     llm = engine.llm
     if not llm and not use_mock:
         return {'success': False, 'error': 'No AI provider configured.'}
-
     prompt = f"""
 You are an AI code assistant. The user wants to make the following change:
 Instruction: {instruction}
@@ -286,6 +324,80 @@ def verify_signature(payload_body, signature_header):
 def health_check():
     return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
 
+# ============================================================
+# TRY-IT-NOW DEMO (No signup required)
+# ============================================================
+@app.route("/try", methods=['GET', 'POST'])
+def try_endpoint():
+    if request.method == 'GET':
+        return '''
+        <!DOCTYPE html>
+        <html>
+        <head><title>Aegis - Try It Now</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+            body { background: #0a0a0a; color: white; font-family: sans-serif; }
+            .container { max-width: 800px; margin: 50px auto; padding: 20px; }
+            textarea { width: 100%; height: 200px; background: #1a1a1a; border: 1px solid #2a2a2a; color: white; padding: 10px; border-radius: 8px; font-family: monospace; }
+            button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; }
+            #result { margin-top: 20px; white-space: pre-wrap; background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px solid #2a2a2a; display: none; }
+        </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>⚡ Try Aegis</h1>
+                <p>Paste your Python code below and see Aegis find edge-case bugs instantly.</p>
+                <form id="try-form">
+                    <textarea id="code" placeholder="def divide(a,b): return a/b" required></textarea>
+                    <br><br>
+                    <button type="submit">Analyze Code</button>
+                </form>
+                <div id="result"></div>
+            </div>
+            <script>
+                document.getElementById('try-form').addEventListener('submit', async function(e) {
+                    e.preventDefault();
+                    const code = document.getElementById('code').value;
+                    if (!code.trim()) return;
+                    const resultDiv = document.getElementById('result');
+                    resultDiv.style.display = 'block';
+                    resultDiv.textContent = '⏳ Analyzing...';
+                    try {
+                        const resp = await fetch('/try', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+                        const data = await resp.json();
+                        if (data.error) { resultDiv.textContent = '❌ ' + data.error; }
+                        else { resultDiv.textContent = data.diff + '\n\n✅ ' + data.message; }
+                    } catch (err) { resultDiv.textContent = '❌ Error: ' + err.message; }
+                });
+            </script>
+        </body>
+        </html>
+        '''
+    elif request.method == 'POST':
+        data = request.get_json()
+        code = data.get('code', '')
+        if not code:
+            return jsonify({'error': 'No code provided'}), 400
+        from ai_qa_engine import QAEngine
+        api_key = os.getenv('OPENAI_API_KEY') or os.getenv('DEEPSEEK_API_KEY')
+        use_mock = not api_key
+        engine = QAEngine(use_mock=use_mock)
+        engine.load_code_from_string(code)
+        passed, fixed_code, diff_output = engine.run_full_loop()
+        if diff_output:
+            return jsonify({
+                'diff': diff_output,
+                'message': 'Fix generated. ' + ('✅ PASSED' if passed else '❌ FAILED (Needs Review)')
+            })
+        else:
+            return jsonify({
+                'diff': 'No changes needed (or mock mode limited)',
+                'message': '✅ Code looks good (mock mode)'
+            })
+
+# ============================================================
+# WEBHOOK (Full version)
+# ============================================================
 @app.route("/webhook", methods=["POST"])
 def webhook():
     signature = request.headers.get("X-Hub-Signature-256")
@@ -301,19 +413,11 @@ def webhook():
         return jsonify({"msg": "pong"}), 200
 
     user = get_user_by_github_repo(repo_name)
-    
-    # ============================================================
-    # TRIAL EXPIRY CHECK: If user exists and trial expired, block
-    # ============================================================
     if user:
         if not is_trial_active(user):
             logger.warning(f"Trial expired for user {user[1]}. Blocking webhook.")
-            # Post a warning comment on the PR (optional but nice)
-            # We can't post because we don't have repo/pr context easily here without more logic, 
-            # but we can just return a 402 Payment Required.
-            return jsonify({"error": "Trial expired. Please subscribe at /dashboard"}), 402
-    
-    if not user:
+            return jsonify({"error": "Trial expired. Please subscribe."}), 402
+    else:
         logger.warning(f"No user found for repo {repo_name}, falling back to env tokens.")
         user = None
 
@@ -553,24 +657,29 @@ def signup():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
+        referral_code = request.form.get('ref')
         if not username or not password:
             flash('Username and password required')
             return redirect(url_for('signup'))
         password_hash = generate_password_hash(password)
+        trial_expiry = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
+        my_code = generate_referral_code()
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
         try:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            # ============================================================
-            # SET TRIAL EXPIRY TO 14 DAYS FROM NOW
-            # ============================================================
-            trial_expiry = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
             c.execute('''
-                INSERT INTO users (username, password_hash, trial_expires_at)
-                VALUES (?, ?, ?)
-            ''', (username, password_hash, trial_expiry))
+                INSERT INTO users (username, password_hash, trial_expires_at, referral_code)
+                VALUES (?, ?, ?, ?)
+            ''', (username, password_hash, trial_expiry, my_code))
+            user_id = c.lastrowid
+            if referral_code:
+                referrer = get_user_by_referral_code(referral_code)
+                if referrer:
+                    c.execute('UPDATE users SET referred_by = ? WHERE id = ?', (referrer[0], user_id))
+                    add_referral(referrer[0], user_id)
             conn.commit()
             conn.close()
-            flash('Account created! Your 14-day trial starts now. Please log in.')
+            flash('Account created! Your 14-day trial starts now.')
             return redirect(url_for('login'))
         except sqlite3.IntegrityError:
             flash('Username already exists.')
@@ -587,8 +696,6 @@ def signup():
             .input-dark:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
             .btn-primary { background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }
             .btn-primary:hover { background: #2563eb; }
-            .btn-social { background: #1a1a1a; border: 1px solid #2a2a2a; color: white; font-weight: 500; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; display: block; text-align: center; }
-            .btn-social:hover { background: #2a2a2a; border-color: #3b82f6; }
         </style>
         </head>
         <body class="min-h-screen flex items-center justify-center">
@@ -597,6 +704,7 @@ def signup():
                 <form method="POST">
                     <input type="text" name="username" placeholder="Username" class="input-dark mb-4" />
                     <input type="password" name="password" placeholder="Password" class="input-dark mb-4" />
+                    <input type="hidden" name="ref" value="{{ request.args.get('ref') or '' }}" />
                     <button type="submit" class="btn-primary">Start Free Trial</button>
                 </form>
                 <p class="text-sm text-[#4b5563] mt-4">Already have an account? <a href="/login" class="text-[#3b82f6] hover:underline">Log in</a></p>
@@ -619,8 +727,7 @@ def login():
             flash('Logged in successfully.')
             return redirect(url_for('dashboard'))
         else:
-            error = 'Invalid username or password. Please try again.'
-    error_html = f'<p class="text-red-400 text-sm mb-4">{error}</p>' if error else ''
+            error = 'Invalid username or password.'
     return f'''
         <!DOCTYPE html>
         <html>
@@ -633,14 +740,12 @@ def login():
             .input-dark:focus {{ outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }}
             .btn-primary {{ background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }}
             .btn-primary:hover {{ background: #2563eb; }}
-            .btn-social {{ background: #1a1a1a; border: 1px solid #2a2a2a; color: white; font-weight: 500; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; display: block; text-align: center; }}
-            .btn-social:hover {{ background: #2a2a2a; border-color: #3b82f6; }}
         </style>
         </head>
         <body class="min-h-screen flex items-center justify-center">
             <div class="card p-8 rounded-2xl max-w-md w-full">
                 <h1 class="text-2xl font-bold mb-6 text-white">Log In</h1>
-                {error_html}
+                {f'<p class="text-red-400 text-sm mb-4">{error}</p>' if error else ''}
                 <form method="POST">
                     <input type="text" name="username" placeholder="Username" class="input-dark mb-4" />
                     <input type="password" name="password" placeholder="Password" class="input-dark mb-4" />
@@ -659,7 +764,7 @@ def logout():
     return redirect(url_for('home'))
 
 # ============================================================
-# OAuth & Stripe (Simplified for brevity)
+# OAuth & Stripe
 # ============================================================
 @app.route("/github-oauth/authorize")
 def github_oauth_authorize():
@@ -781,16 +886,20 @@ def dashboard():
         conn.close()
         flash('Settings saved!')
         return redirect(url_for('dashboard'))
+
+    referral_count = count_referrals(user_id)
+    referral_link = f"{YOUR_DOMAIN}/signup?ref={user[13]}"  # referral_code is at index 13
     html = load_html('dashboard.html')
+    # Inject dynamic values
     html = html.replace('value="deepseek"', f'value="{user[3]}" selected' if user[3] == 'deepseek' else 'value="deepseek"')
     html = html.replace('placeholder="owner/repo"', f'value="{user[5] or ""}"')
     html = html.replace('placeholder="sk-..."', f'value="{user[4] or ""}"')
     html = html.replace('placeholder="e.g. gpt-4o, claude-3-5-sonnet..."', f'value="{user[11] or ""}"')
+    # Subscription status
     sub_status = user[9] or 'inactive'
     if sub_status == 'active':
         html = html.replace('Billing Status: Inactive', 'Billing Status: ✅ Active')
     else:
-        # Check if trial is active
         trial_expires_at = user[12] if len(user) > 12 else None
         if trial_expires_at:
             try:
@@ -805,6 +914,9 @@ def dashboard():
             html = html.replace('Billing Status: Inactive', 'Billing Status: ❌ Trial Expired')
     github_status = '✅ Connected' if user[6] else '❌ Not Connected'
     html = html.replace('GitHub Status: Not Connected', f'GitHub Status: {github_status}')
+    # Referral section – we will inject placeholder that dashboard.html uses
+    html = html.replace('{{ referral_link }}', referral_link)
+    html = html.replace('{{ referral_count }}', str(referral_count))
     return html
 
 if __name__ == "__main__":
