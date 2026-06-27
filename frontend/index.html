@@ -8,24 +8,17 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
         * { font-family: 'Inter', sans-serif; }
-        
-        /* Lightning Theme Background */
         .gradient-bg {
             background: radial-gradient(ellipse at 50% 0%, #0f172a 0%, #020617 100%);
         }
-        
-        /* Electric Glow Effect */
         .electric-glow {
             text-shadow: 0 0 40px rgba(0, 242, 254, 0.3), 0 0 80px rgba(79, 172, 254, 0.1);
             animation: flicker 3s infinite alternate;
         }
-        
         @keyframes flicker {
             0% { opacity: 0.9; text-shadow: 0 0 30px #00f2fe, 0 0 60px #4facfe; }
             100% { opacity: 1; text-shadow: 0 0 50px #00f2fe, 0 0 100px #4facfe, 0 0 150px #00f2fe; }
         }
-
-        /* Pulse Border for CTA */
         .pulse-border {
             animation: pulseGlow 2s infinite ease-in-out;
         }
@@ -34,8 +27,6 @@
             50% { box-shadow: 0 0 30px rgba(0, 242, 254, 0.6), 0 0 60px rgba(79, 172, 254, 0.3); }
             100% { box-shadow: 0 0 10px rgba(0, 242, 254, 0.3); }
         }
-
-        /* Card Hover Effects */
         .card-hover:hover {
             transform: translateY(-4px);
             transition: all 0.3s ease;
@@ -48,8 +39,6 @@
         .border-glow:hover {
             border-color: rgba(0, 242, 254, 0.5);
         }
-
-        /* Video placeholder styling */
         .video-placeholder {
             background: linear-gradient(135deg, rgba(0, 242, 254, 0.05), rgba(79, 172, 254, 0.02));
             border: 2px dashed rgba(0, 242, 254, 0.2);
@@ -59,8 +48,6 @@
             border-color: rgba(0, 242, 254, 0.5);
             background: linear-gradient(135deg, rgba(0, 242, 254, 0.1), rgba(79, 172, 254, 0.05));
         }
-
-        /* Scroll Fix */
         html, body {
             height: 100%;
             overflow-y: auto;
@@ -70,7 +57,7 @@
 <body class="gradient-bg text-white min-h-screen">
 
     <!-- ============================================================
-    NAVIGATION
+    NAVIGATION (UPDATED LINKS)
     ============================================================ -->
     <nav class="max-w-7xl mx-auto px-6 py-6 flex justify-between items-center">
         <div class="flex items-center space-x-2">
@@ -83,13 +70,15 @@
             <a href="#demo" class="hover:text-cyan-400 transition">Demo</a>
         </div>
         <div class="flex space-x-4">
-            <a href="#" class="text-gray-400 hover:text-white transition">Log In</a>
-            <a href="#" class="bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-medium transition shadow-lg shadow-cyan-600/20">Get Started</a>
+            <!-- FIXED: Points to /login -->
+            <a href="/login" class="text-gray-400 hover:text-white transition">Log In</a>
+            <!-- FIXED: Points to /signup -->
+            <a href="/signup" class="bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-medium transition shadow-lg shadow-cyan-600/20">Get Started</a>
         </div>
     </nav>
 
     <!-- ============================================================
-    HERO SECTION
+    HERO SECTION (UPDATED LINK)
     ============================================================ -->
     <section class="max-w-7xl mx-auto px-6 pt-20 pb-32 text-center">
         <div class="inline-block bg-cyan-500/10 text-cyan-300 px-4 py-1.5 rounded-full text-sm mb-6 border border-cyan-500/20">
@@ -105,7 +94,8 @@
             Your AI QA Guardian works 24/7 on every Pull Request.
         </p>
         <div class="flex flex-col sm:flex-row justify-center gap-4 mt-10">
-            <a href="#" class="bg-cyan-600 hover:bg-cyan-700 px-8 py-4 rounded-xl text-lg font-semibold transition pulse-border shadow-lg shadow-cyan-600/30">
+            <!-- FIXED: Points to /signup -->
+            <a href="/signup" class="bg-cyan-600 hover:bg-cyan-700 px-8 py-4 rounded-xl text-lg font-semibold transition pulse-border shadow-lg shadow-cyan-600/30">
                 ⚡ Start Free Trial
             </a>
             <a href="#demo" class="border border-gray-700 hover:border-cyan-500 hover:text-cyan-400 px-8 py-4 rounded-xl text-lg font-medium transition">
@@ -116,9 +106,7 @@
             🔐 No credit card required • Free 14-day trial • BYOK (Bring Your Own Key) • Zero hidden costs
         </div>
 
-        <!-- ============================================================
-        DEMO VIDEO SECTION (Replace with your actual video)
-        ============================================================ -->
+        <!-- Demo Placeholder -->
         <div id="demo" class="mt-16 max-w-4xl mx-auto">
             <div class="video-placeholder rounded-2xl p-2">
                 <div class="bg-gray-950 rounded-xl p-12 flex flex-col items-center justify-center min-h-[320px] border border-gray-800">
@@ -131,15 +119,6 @@
                         <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
                         <span>AI generated demo • 30 seconds</span>
                     </div>
-                    <!-- 
-                    ============================================================
-                    WHEN YOU HAVE YOUR VIDEO, REPLACE THE ABOVE WITH:
-                    ============================================================
-                    <video controls class="w-full rounded-xl">
-                        <source src="your-demo-video.mp4" type="video/mp4">
-                        Your browser does not support the video tag.
-                    </video>
-                    -->
                 </div>
             </div>
             <p class="text-center text-gray-500 text-sm mt-3">
@@ -147,7 +126,7 @@
             </p>
         </div>
 
-        <!-- Demo Diff Preview (Below Video) -->
+        <!-- Diff Preview -->
         <div class="mt-8 max-w-4xl mx-auto bg-gray-900/30 rounded-xl border border-cyan-900/20 p-4">
             <div class="bg-gray-950 rounded-lg p-4 text-left font-mono text-sm text-green-400 overflow-x-auto border border-gray-800">
                 <span class="text-gray-500">--- Original</span><br />
@@ -161,7 +140,7 @@
     </section>
 
     <!-- ============================================================
-    FEATURES GRID
+    FEATURES
     ============================================================ -->
     <section id="features" class="max-w-7xl mx-auto px-6 py-24">
         <div class="text-center mb-16">
@@ -169,7 +148,6 @@
             <h2 class="text-4xl md:text-5xl font-bold mt-2">What does Aegis do?</h2>
             <p class="text-gray-400 max-w-xl mx-auto mt-4">Your personal QA engineer that works 10x faster than a human.</p>
         </div>
-
         <div class="grid md:grid-cols-3 gap-8">
             <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800 card-hover border-glow">
                 <div class="text-4xl mb-4">⚡</div>
@@ -241,8 +219,6 @@
             <p class="text-gray-400 max-w-xl mx-auto mt-4">Zero hidden costs. You pay only for the software.</p>
         </div>
         <div class="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-            
-            <!-- Developer Tier -->
             <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800 text-center card-hover">
                 <h3 class="text-xl font-bold">Developer</h3>
                 <p class="text-4xl font-bold mt-4">$29 <span class="text-gray-400 text-lg font-normal">/mo</span></p>
@@ -253,10 +229,9 @@
                     <li>✅ Oracle Chatbot (/ask)</li>
                     <li>✅ Mock Mode (No API key needed)</li>
                 </ul>
-                <a href="#" class="block mt-8 bg-cyan-600 hover:bg-cyan-700 px-6 py-3 rounded-lg font-medium transition shadow-lg shadow-cyan-600/20">Get Started</a>
+                <!-- FIXED: Points to /signup -->
+                <a href="/signup" class="block mt-8 bg-cyan-600 hover:bg-cyan-700 px-6 py-3 rounded-lg font-medium transition shadow-lg shadow-cyan-600/20">Get Started</a>
             </div>
-
-            <!-- Team Tier (Sweet Spot) -->
             <div class="bg-cyan-600/10 p-8 rounded-2xl border border-cyan-500/50 text-center card-hover relative shadow-xl shadow-cyan-600/5">
                 <span class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-cyan-600 text-white text-xs px-4 py-1 rounded-full border border-cyan-400/50">⚡ POPULAR</span>
                 <h3 class="text-xl font-bold">Team</h3>
@@ -268,10 +243,9 @@
                     <li>✅ Admin dashboard</li>
                     <li>✅ Slack notifications</li>
                 </ul>
-                <a href="#" class="block mt-8 bg-cyan-600 hover:bg-cyan-700 px-6 py-3 rounded-lg font-medium transition pulse-border">⚡ Get Started</a>
+                <!-- FIXED: Points to /signup -->
+                <a href="/signup" class="block mt-8 bg-cyan-600 hover:bg-cyan-700 px-6 py-3 rounded-lg font-medium transition pulse-border">⚡ Get Started</a>
             </div>
-
-            <!-- Enterprise Tier -->
             <div class="bg-gray-900/50 p-8 rounded-2xl border border-gray-800 text-center card-hover">
                 <h3 class="text-xl font-bold">Enterprise</h3>
                 <p class="text-4xl font-bold mt-4">Custom</p>
@@ -282,15 +256,12 @@
                     <li>✅ Private cloud deployment</li>
                     <li>✅ SSO / SAML</li>
                 </ul>
-                <a href="#" class="block mt-8 border border-gray-700 hover:border-cyan-500 hover:text-cyan-400 px-6 py-3 rounded-lg font-medium transition">Contact Sales</a>
+                <a href="/signup" class="block mt-8 border border-gray-700 hover:border-cyan-500 hover:text-cyan-400 px-6 py-3 rounded-lg font-medium transition">Contact Sales</a>
             </div>
         </div>
         <p class="text-center text-gray-500 text-sm mt-8">*You pay for AI tokens directly to OpenAI/DeepSeek (BYOK). We never charge per token.</p>
     </section>
 
-    <!-- ============================================================
-    FOOTER
-    ============================================================ -->
     <footer class="border-t border-gray-800 py-12">
         <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center">
             <p class="text-gray-500 text-sm">© 2026 Aegis. All rights reserved. ⚡</p>
