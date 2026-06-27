@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Aegis - Complete Market Ready Backend
+Includes 14-Day Trial Expiry Logic
 """
 
 import os
@@ -77,7 +78,8 @@ def init_db():
             subscription_id TEXT,
             subscription_status TEXT DEFAULT 'inactive',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            model TEXT DEFAULT ''
+            model TEXT DEFAULT '',
+            trial_expires_at TIMESTAMP  -- <-- NEW: 14-day trial expiry
         )
     ''')
     c.execute('''
@@ -109,10 +111,17 @@ def init_db():
 def migrate_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Add model column if missing
     try:
         c.execute("ALTER TABLE users ADD COLUMN model TEXT DEFAULT ''")
         conn.commit()
-        logger.info("Added 'model' column.")
+    except sqlite3.OperationalError:
+        pass
+    # Add trial_expires_at column if missing
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN trial_expires_at TIMESTAMP")
+        conn.commit()
+        logger.info("Added 'trial_expires_at' column.")
     except sqlite3.OperationalError:
         pass
     conn.close()
@@ -121,7 +130,32 @@ init_db()
 migrate_db()
 
 # ============================================================
-# Helpers
+# Helper: Check if user's trial is active
+# ============================================================
+def is_trial_active(user):
+    """Returns True if user can use the bot (trial not expired OR subscription active)."""
+    if not user:
+        return False
+    # If they have an active subscription, always allow
+    if user[9] == 'active':  # subscription_status is index 9
+        return True
+    # Check trial expiry
+    trial_expires_at = user[12] if len(user) > 12 else None
+    if trial_expires_at:
+        try:
+            expiry = datetime.strptime(trial_expires_at, '%Y-%m-%d %H:%M:%S')
+            if datetime.utcnow() < expiry:
+                return True
+            else:
+                logger.warning(f"User {user[1]} trial expired on {expiry}")
+                return False
+        except:
+            return False  # If parsing fails, block access
+    # If no expiry set and no subscription, block (should not happen)
+    return False
+
+# ============================================================
+# Other Helpers
 # ============================================================
 def get_user(username):
     conn = sqlite3.connect(DB_PATH)
@@ -237,7 +271,7 @@ Here is the current code:Apply the change and return ONLY the corrected code. Ma
         return {'success': False, 'error': str(e)}
 
 # ============================================================
-# Webhook Verification (Properly Indented)
+# Webhook Verification
 # ============================================================
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
 
@@ -267,6 +301,18 @@ def webhook():
         return jsonify({"msg": "pong"}), 200
 
     user = get_user_by_github_repo(repo_name)
+    
+    # ============================================================
+    # TRIAL EXPIRY CHECK: If user exists and trial expired, block
+    # ============================================================
+    if user:
+        if not is_trial_active(user):
+            logger.warning(f"Trial expired for user {user[1]}. Blocking webhook.")
+            # Post a warning comment on the PR (optional but nice)
+            # We can't post because we don't have repo/pr context easily here without more logic, 
+            # but we can just return a 402 Payment Required.
+            return jsonify({"error": "Trial expired. Please subscribe at /dashboard"}), 402
+    
     if not user:
         logger.warning(f"No user found for repo {repo_name}, falling back to env tokens.")
         user = None
@@ -514,10 +560,17 @@ def signup():
         try:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, password_hash))
+            # ============================================================
+            # SET TRIAL EXPIRY TO 14 DAYS FROM NOW
+            # ============================================================
+            trial_expiry = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
+            c.execute('''
+                INSERT INTO users (username, password_hash, trial_expires_at)
+                VALUES (?, ?, ?)
+            ''', (username, password_hash, trial_expiry))
             conn.commit()
             conn.close()
-            flash('Account created! Please log in.')
+            flash('Account created! Your 14-day trial starts now. Please log in.')
             return redirect(url_for('login'))
         except sqlite3.IntegrityError:
             flash('Username already exists.')
@@ -540,20 +593,12 @@ def signup():
         </head>
         <body class="min-h-screen flex items-center justify-center">
             <div class="card p-8 rounded-2xl max-w-md w-full">
-                <h1 class="text-2xl font-bold mb-6 text-white">Create Account</h1>
+                <h1 class="text-2xl font-bold mb-6 text-white">Start Your 14-Day Trial</h1>
                 <form method="POST">
                     <input type="text" name="username" placeholder="Username" class="input-dark mb-4" />
                     <input type="password" name="password" placeholder="Password" class="input-dark mb-4" />
-                    <button type="submit" class="btn-primary">Sign Up</button>
+                    <button type="submit" class="btn-primary">Start Free Trial</button>
                 </form>
-                <div class="relative my-6">
-                    <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-[#1a1a1a]"></div></div>
-                    <div class="relative flex justify-center text-xs"><span class="bg-[#0a0a0a] px-2 text-[#4b5563]">OR</span></div>
-                </div>
-                <div class="space-y-3">
-                    <a href="#" class="btn-social">🔵 Sign up with Google</a>
-                    <a href="#" class="btn-social">⚫ Sign up with GitHub</a>
-                </div>
                 <p class="text-sm text-[#4b5563] mt-4">Already have an account? <a href="/login" class="text-[#3b82f6] hover:underline">Log in</a></p>
             </div>
         </body>
@@ -601,14 +646,6 @@ def login():
                     <input type="password" name="password" placeholder="Password" class="input-dark mb-4" />
                     <button type="submit" class="btn-primary">Log In</button>
                 </form>
-                <div class="relative my-6">
-                    <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-[#1a1a1a]"></div></div>
-                    <div class="relative flex justify-center text-xs"><span class="bg-[#0a0a0a] px-2 text-[#4b5563]">OR</span></div>
-                </div>
-                <div class="space-y-3">
-                    <a href="#" class="btn-social">🔵 Sign in with Google</a>
-                    <a href="#" class="btn-social">⚫ Sign in with GitHub</a>
-                </div>
                 <p class="text-sm text-[#4b5563] mt-4">No account? <a href="/signup" class="text-[#3b82f6] hover:underline">Create one</a></p>
             </div>
         </body>
@@ -622,7 +659,7 @@ def logout():
     return redirect(url_for('home'))
 
 # ============================================================
-# OAuth
+# OAuth & Stripe (Simplified for brevity)
 # ============================================================
 @app.route("/github-oauth/authorize")
 def github_oauth_authorize():
@@ -637,7 +674,6 @@ def github_oauth_callback():
     if not code:
         flash('Authorization failed.')
         return redirect(url_for('dashboard'))
-
     resp = requests.post(
         GITHUB_OAUTH_URL,
         headers={'Accept': 'application/json'},
@@ -647,7 +683,6 @@ def github_oauth_callback():
     if 'access_token' not in data:
         flash('Failed to get access token.')
         return redirect(url_for('dashboard'))
-
     access_token = data['access_token']
     user_id = session['user_id']
     conn = sqlite3.connect(DB_PATH)
@@ -655,29 +690,20 @@ def github_oauth_callback():
     c.execute('UPDATE users SET github_token = ? WHERE id = ?', (access_token, user_id))
     conn.commit()
     conn.close()
-
     flash('GitHub account connected successfully!')
     return redirect(url_for('dashboard'))
 
-# ============================================================
-# Stripe
-# ============================================================
 @app.route("/create-checkout-session", methods=['POST'])
 def create_checkout_session():
     if 'user_id' not in session:
         return jsonify({"error": "Unauthorized"}), 401
-
     user = get_user_by_id(session['user_id'])
     if not user:
         return jsonify({"error": "User not found"}), 404
-
-    PRICE_IDS = {
-        'monthly': os.getenv("STRIPE_PRICE_MONTHLY"),
-    }
+    PRICE_IDS = {'monthly': os.getenv("STRIPE_PRICE_MONTHLY")}
     price_id = PRICE_IDS.get('monthly')
     if not price_id:
         return jsonify({"error": "Stripe price ID not configured"}), 500
-
     try:
         checkout_session = stripe.checkout.Session.create(
             customer=user[7] or None,
@@ -703,9 +729,7 @@ def stripe_webhook():
         return jsonify({"error": "Invalid payload"}), 400
     except stripe.error.SignatureVerificationError:
         return jsonify({"error": "Invalid signature"}), 400
-
     data_object = event['data']['object']
-
     if event['type'] == 'checkout.session.completed':
         session_data = data_object
         customer_id = session_data['customer']
@@ -715,7 +739,6 @@ def stripe_webhook():
         status = sub.status
         update_subscription(user_id, customer_id, subscription_id, status)
         logger.info(f"Subscription {subscription_id} activated for user {user_id}")
-
     elif event['type'] == 'customer.subscription.updated':
         subscription = data_object
         customer_id = subscription['customer']
@@ -726,7 +749,6 @@ def stripe_webhook():
         conn.commit()
         conn.close()
         logger.info(f"Subscription {subscription['id']} updated to {status}")
-
     elif event['type'] == 'customer.subscription.deleted':
         subscription = data_object
         customer_id = subscription['customer']
@@ -736,17 +758,14 @@ def stripe_webhook():
         conn.commit()
         conn.close()
         logger.info(f"Subscription {subscription['id']} canceled")
-
     return jsonify({"status": "success"}), 200
 
 @app.route("/dashboard", methods=['GET', 'POST'])
 def dashboard():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-
     user_id = session['user_id']
     user = get_user_by_id(user_id)
-
     if request.method == 'POST':
         provider = request.form.get('provider')
         api_key = request.form.get('api_key')
@@ -762,7 +781,6 @@ def dashboard():
         conn.close()
         flash('Settings saved!')
         return redirect(url_for('dashboard'))
-
     html = load_html('dashboard.html')
     html = html.replace('value="deepseek"', f'value="{user[3]}" selected' if user[3] == 'deepseek' else 'value="deepseek"')
     html = html.replace('placeholder="owner/repo"', f'value="{user[5] or ""}"')
@@ -772,14 +790,23 @@ def dashboard():
     if sub_status == 'active':
         html = html.replace('Billing Status: Inactive', 'Billing Status: ✅ Active')
     else:
-        html = html.replace('Billing Status: Inactive', 'Billing Status: ❌ Inactive')
+        # Check if trial is active
+        trial_expires_at = user[12] if len(user) > 12 else None
+        if trial_expires_at:
+            try:
+                expiry = datetime.strptime(trial_expires_at, '%Y-%m-%d %H:%M:%S')
+                if datetime.utcnow() < expiry:
+                    html = html.replace('Billing Status: Inactive', f'Billing Status: ⏳ Trial active (expires {expiry.strftime("%b %d")})')
+                else:
+                    html = html.replace('Billing Status: Inactive', 'Billing Status: ❌ Trial Expired - Subscribe!')
+            except:
+                html = html.replace('Billing Status: Inactive', 'Billing Status: ❌ Trial Expired')
+        else:
+            html = html.replace('Billing Status: Inactive', 'Billing Status: ❌ Trial Expired')
     github_status = '✅ Connected' if user[6] else '❌ Not Connected'
     html = html.replace('GitHub Status: Not Connected', f'GitHub Status: {github_status}')
     return html
 
-# ============================================================
-# Run
-# ============================================================
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)
