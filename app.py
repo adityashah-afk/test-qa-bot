@@ -5,6 +5,7 @@ Includes: 14-Day Trial, Referrals, Team Plan, ROI Analytics, Scarcity Upgrade Sc
 ALL COMMANDS INTACT: /ask, /fix, /fix-ask, /change, approve/reject
 Professional Signup: Full Name, Email, Company
 NEW: Security Guard (AST), Multi-Language Router, Optimized Context
+NEW: GitHub Workflow Generator (Viral Distribution)
 """
 
 import os
@@ -15,7 +16,7 @@ import hashlib
 import secrets
 import string
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, redirect, url_for, session, flash, render_template_string
+from flask import Flask, request, jsonify, redirect, url_for, session, flash, render_template_string, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
 import stripe
@@ -23,7 +24,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from github_client import get_pr_diff, post_comment
-# We will import the new analyzer routers dynamically or via the new functions below
 from pr_analyzer import analyze_pr_diff, extract_changed_functions
 from code_scanner import ask_question_about_code
 from js_analyzer import extract_js_functions, run_jest_test
@@ -349,7 +349,7 @@ def log_audit(org_id, user_id, action, pr_number=None, repo_name=None, details=N
     conn.close()
 
 # ============================================================
-# LANGUAGE DETECTION & ROUTER (NEW)
+# LANGUAGE DETECTION & ROUTER
 # ============================================================
 def detect_language(diff_text):
     """Detect the primary language of the PR diff."""
@@ -387,6 +387,123 @@ def verify_signature(payload_body, signature_header):
     hash_object = hmac.new(GITHUB_SECRET.encode('utf-8'), msg=payload_body, digestmod=hashlib.sha256)
     expected = "sha256=" + hash_object.hexdigest()
     return hmac.compare_digest(expected, signature_header)
+
+@app.route("/health", methods=["GET"])
+def health_check():
+    return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
+
+# ============================================================
+# TRY-IT-NOW DEMO (WITH DOWNLOAD WORKFLOW BUTTON)
+# ============================================================
+@app.route("/try", methods=['GET', 'POST'])
+def try_endpoint():
+    if request.method == 'GET':
+        return '''
+        <!DOCTYPE html>
+        <html><head><title>Aegis - Try It Now</title><script src="https://cdn.tailwindcss.com"></script>
+        <style>body { background: #0a0a0a; color: white; font-family: sans-serif; }
+        .container { max-width: 800px; margin: 50px auto; padding: 20px; }
+        textarea { width: 100%; height: 200px; background: #1a1a1a; border: 1px solid #2a2a2a; color: white; padding: 10px; border-radius: 8px; font-family: monospace; }
+        button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        #result { margin-top: 20px; white-space: pre-wrap; background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px solid #2a2a2a; display: none; }
+        .btn-secondary { background: #1a1a1a; color: white; border: 1px solid #2a2a2a; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; text-decoration: none; display: inline-block; }
+        .btn-secondary:hover { background: #2a2a2a; }
+        .flex { display: flex; gap: 10px; flex-wrap: wrap; }
+        </style>
+        </head><body>
+        <div class="container">
+        <h1>⚡ Try Aegis</h1>
+        <p>Paste your Python code below and see Aegis find edge-case bugs instantly.</p>
+        <form id="try-form">
+        <textarea id="code" placeholder="def divide(a,b): return a/b" required></textarea>
+        <br><br>
+        <div class="flex">
+        <button type="submit">Analyze Code</button>
+        <a href="/download-workflow" class="btn-secondary">📥 Download GitHub Workflow</a>
+        </div>
+        </form>
+        <div id="result"></div>
+        </div>
+        <script>
+        document.getElementById('try-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const code = document.getElementById('code').value;
+            if (!code.trim()) return;
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '⏳ Analyzing...';
+            try {
+                const resp = await fetch('/try', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+                const data = await resp.json();
+                if (data.error) { resultDiv.textContent = '❌ ' + data.error; }
+                else { resultDiv.textContent = data.diff + '\n\n✅ ' + data.message; }
+            } catch (err) { resultDiv.textContent = '❌ Error: ' + err.message; }
+        });
+        </script></body></html>
+        '''
+    elif request.method == 'POST':
+        data = request.get_json()
+        code = data.get('code', '')
+        if not code: return jsonify({'error': 'No code provided'}), 400
+        from ai_qa_engine import QAEngine
+        api_key = os.getenv('OPENAI_API_KEY') or os.getenv('DEEPSEEK_API_KEY')
+        use_mock = not api_key
+        engine = QAEngine(use_mock=use_mock)
+        engine.load_code_from_string(code)
+        passed, fixed_code, diff_output = engine.run_full_loop()
+        if diff_output:
+            return jsonify({'diff': diff_output, 'message': 'Fix generated. ' + ('✅ PASSED' if passed else '❌ FAILED (Needs Review)')})
+        else:
+            return jsonify({'diff': 'No changes needed (or mock mode limited)', 'message': '✅ Code looks good (mock mode)'})
+
+# ============================================================
+# GITHUB WORKFLOW GENERATOR (Viral Distribution)
+# ============================================================
+@app.route("/download-workflow", methods=['GET'])
+def download_workflow():
+    """Download a GitHub Actions workflow file that runs Aegis on PRs."""
+    yaml = """name: Aegis QA Check
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  aegis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.13'
+      - name: Install Aegis
+        run: |
+          pip install flask PyGithub openai pytest python-dotenv stripe requests
+      - name: Run Aegis
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python app.py
+"""
+    return Response(yaml, mimetype='text/yaml', headers={"Content-Disposition": "attachment; filename=aegis.yml"})
+
+# ============================================================
+# WEBHOOK
+# ============================================================
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not verify_signature(request.data, signature):
+        logger.warning("Invalid signature")
+        return jsonify({"error": "Invalid signature"}), 401
+
+    event = request.headers.get("X-GitHub-Event")
+    payload = request.get_json()
+    repo_name = payload.get("repository", {}).get("full_name")
+
+    if event == "ping":
+        return jsonify({"msg": "pong"}), 200
 
     user = get_user_by_github_repo(repo_name)
     if user and not is_trial_active(user):
@@ -630,295 +747,6 @@ def verify_signature(payload_body, signature_header):
             return jsonify({"msg": "PR processed"}), 200
         except Exception as e:
             logger.error(f"Error processing PR #{pr_number}: {e}")
-            return jsonify({"error": str(e)}), 500
-
-    return jsonify({"msg": "Ignored"}), 200
-# ============================================================
-# TRY-IT-NOW DEMO
-# ============================================================
-@app.route("/try", methods=['GET', 'POST'])
-def try_endpoint():
-    if request.method == 'GET':
-        return '''
-        <!DOCTYPE html>
-        <html><head><title>Aegis - Try It Now</title><script src="https://cdn.tailwindcss.com"></script>
-        <style>body { background: #0a0a0a; color: white; font-family: sans-serif; }
-        .container { max-width: 800px; margin: 50px auto; padding: 20px; }
-        textarea { width: 100%; height: 200px; background: #1a1a1a; border: 1px solid #2a2a2a; color: white; padding: 10px; border-radius: 8px; font-family: monospace; }
-        button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; }
-        #result { margin-top: 20px; white-space: pre-wrap; background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px solid #2a2a2a; display: none; }</style>
-        </head><body>
-        <div class="container"><h1>⚡ Try Aegis</h1><p>Paste your Python code below and see Aegis find edge-case bugs instantly.</p>
-        <form id="try-form"><textarea id="code" placeholder="def divide(a,b): return a/b" required></textarea><br><br><button type="submit">Analyze Code</button></form>
-        <div id="result"></div></div>
-        <script>
-        document.getElementById('try-form').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const code = document.getElementById('code').value;
-            if (!code.trim()) return;
-            const resultDiv = document.getElementById('result');
-            resultDiv.style.display = 'block';
-            resultDiv.textContent = '⏳ Analyzing...';
-            try {
-                const resp = await fetch('/try', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
-                const data = await resp.json();
-                if (data.error) { resultDiv.textContent = '❌ ' + data.error; }
-                else { resultDiv.textContent = data.diff + '\n\n✅ ' + data.message; }
-            } catch (err) { resultDiv.textContent = '❌ Error: ' + err.message; }
-        });
-        </script></body></html>
-        '''
-    elif request.method == 'POST':
-        data = request.get_json()
-        code = data.get('code', '')
-        if not code: return jsonify({'error': 'No code provided'}), 400
-        from ai_qa_engine import QAEngine
-        api_key = os.getenv('OPENAI_API_KEY') or os.getenv('DEEPSEEK_API_KEY')
-        use_mock = not api_key
-        engine = QAEngine(use_mock=use_mock)
-        engine.load_code_from_string(code)
-        passed, fixed_code, diff_output = engine.run_full_loop()
-        if diff_output:
-            return jsonify({'diff': diff_output, 'message': 'Fix generated. ' + ('✅ PASSED' if passed else '❌ FAILED (Needs Review)')})
-        else:
-            return jsonify({'diff': 'No changes needed (or mock mode limited)', 'message': '✅ Code looks good (mock mode)'})
-
-# ============================================================
-# WEBHOOK (UPDATED TO USE ROUTER)
-# ============================================================
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    signature = request.headers.get("X-Hub-Signature-256")
-    if not verify_signature(request.data, signature):
-        logger.warning("Invalid signature")
-        return jsonify({"error": "Invalid signature"}), 401
-
-    event = request.headers.get("X-GitHub-Event")
-    payload = request.get_json()
-    repo_name = payload.get("repository", {}).get("full_name")
-
-    if event == "ping":
-        return jsonify({"msg": "pong"}), 200
-
-    user = get_user_by_github_repo(repo_name)
-    if user and not is_trial_active(user):
-        return jsonify({"error": "Trial expired. Please subscribe."}), 402
-
-    org_api_key = None
-    org_id = None
-    team_rules = None
-    if user:
-        org_id = user[14] if len(user) > 14 else None
-        if org_id:
-            org_api_key = get_org_api_key(org_id)
-            team_rules = get_org_rules(org_id)
-
-    # ============================================================
-    # CHATBOT & MANUAL COMMANDS (ALL INTACT)
-    # ============================================================
-    if event == "issue_comment":
-        issue = payload.get("issue", {})
-        comment_body = payload.get("comment", {}).get("body", "")
-        pr_number = issue.get("number")
-        repo_name = payload["repository"]["full_name"]
-
-        # --- /ask ---
-        if issue.get("pull_request") and comment_body.strip().startswith("/ask"):
-            question = comment_body.replace("/ask", "").strip() or "What does this code do?"
-            logger.info(f"Chatbot triggered on PR #{pr_number} in {repo_name}")
-            try:
-                if org_api_key:
-                    os.environ['LLM_PROVIDER'] = 'deepseek'
-                    os.environ['OPENAI_API_KEY'] = org_api_key
-                elif user:
-                    os.environ['LLM_PROVIDER'] = user[3]
-                    os.environ['OPENAI_API_KEY'] = user[4] or ""
-                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
-                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                answer = ask_question_about_code(question, diff_content)
-                post_comment(repo, pr_number, f"🤖 **AI Chatbot:**\n\n{answer}")
-                if org_id: log_audit(org_id, user[0], 'ask', pr_number, repo_name, f"Asked: {question}")
-                return jsonify({"msg": "Chatbot replied"}), 200
-            except Exception as e: logger.error(f"Chatbot Error: {e}"); return jsonify({"error": str(e)}), 500
-
-        # --- /fix (Direct) ---
-        elif issue.get("pull_request") and comment_body.strip().startswith("/fix"):
-            logger.info(f"Manual fix triggered on PR #{pr_number} in {repo_name}")
-            try:
-                if org_api_key:
-                    os.environ['LLM_PROVIDER'] = 'deepseek'
-                    os.environ['OPENAI_API_KEY'] = org_api_key
-                elif user:
-                    os.environ['LLM_PROVIDER'] = user[3]
-                    os.environ['OPENAI_API_KEY'] = user[4] or ""
-                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
-                user_model = user[11] if user and len(user) > 11 else None
-                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                api_key = user[4] if user else None
-                use_mock = not (org_api_key or api_key)
-                # === USE THE ROUTED ANALYZER ===
-                result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
-                status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
-                reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix`)**
-
-**Status:** {status}
-
-**Functions Detected:**
-{extract_changed_functions(diff_content)[:500]}...
-
-**AI Suggested Fix (Diff):**
-{result['diff_output'][:1500]}
-
-🔔 *This fix was applied automatically. Review the changes and merge if satisfied.*
-"""
-                post_comment(repo, pr_number, reply)
-                if org_id: log_audit(org_id, user[0] if user else None, 'fix', pr_number, repo_name, f"Status: {status}")
-                return jsonify({"msg": "Direct fix posted"}), 200
-            except Exception as e: logger.error(f"/fix error: {e}"); return jsonify({"error": str(e)}), 500
-
-        # --- /fix-ask (Approval) ---
-        elif issue.get("pull_request") and comment_body.strip().startswith("/fix-ask"):
-            logger.info(f"Fix with approval triggered on PR #{pr_number} in {repo_name}")
-            try:
-                if org_api_key:
-                    os.environ['LLM_PROVIDER'] = 'deepseek'
-                    os.environ['OPENAI_API_KEY'] = org_api_key
-                elif user:
-                    os.environ['LLM_PROVIDER'] = user[3]
-                    os.environ['OPENAI_API_KEY'] = user[4] or ""
-                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
-                user_model = user[11] if user and len(user) > 11 else None
-                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                api_key = user[4] if user else None
-                use_mock = not (org_api_key or api_key)
-                # === USE THE ROUTED ANALYZER ===
-                result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
-                status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
-                if result['fixed_code'] and result['diff_output']:
-                    save_pending_fix(pr_number, repo_name, result['fixed_code'], result['diff_output'])
-                error_info = result.get('error_log', 'No errors detected.')[:500]
-                reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix-ask`)**
-
-**Status:** {status}
-
-**Functions Detected:**
-{extract_changed_functions(diff_content)[:500]}...
-
-**AI Suggested Fix (Diff):**
-{result['diff_output'][:1500]}
-
-**Errors Found:**
-{error_info}
-
----
-✅ **Approve this fix?** Reply to this comment with `approve` to apply the fix, or `reject` to cancel.
-"""
-                post_comment(repo, pr_number, reply)
-                if org_id: log_audit(org_id, user[0] if user else None, 'fix-ask', pr_number, repo_name, f"Status: {status}")
-                return jsonify({"msg": "Pending fix posted"}), 200
-            except Exception as e: logger.error(f"/fix-ask error: {e}"); return jsonify({"error": str(e)}), 500
-
-        # --- /change (Natural Language) ---
-        elif issue.get("pull_request") and comment_body.strip().startswith("/change"):
-            instruction = comment_body.replace("/change", "").strip()
-            if not instruction:
-                post_comment(repo, pr_number, "❌ Please specify what you want to change.")
-                return jsonify({"msg": "No instruction"}), 200
-            logger.info(f"Code change triggered on PR #{pr_number} in {repo_name}")
-            try:
-                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                change_result = process_natural_language_change(instruction, diff_content, user)
-                if change_result['success']:
-                    save_pending_fix(pr_number, repo_name, change_result['fixed_code'], change_result['diff_output'])
-                    reply = f"""🤖 **Aegis Code Change (Triggered via `/change`)**
-
-**Instruction:** *"{instruction}"*
-
-**Changes Made:**
-{change_result['description']}
-
-**Diff:**
-{change_result['diff_output'][:1500]}
-
----
-✅ **Approve this change?** Reply with `approve` or `reject`.
-"""
-                    post_comment(repo, pr_number, reply)
-                    if org_id: log_audit(org_id, user[0] if user else None, 'change', pr_number, repo_name, f"Change: {instruction}")
-                    return jsonify({"msg": "Pending change posted"}), 200
-                else:
-                    post_comment(repo, pr_number, f"❌ Failed: {change_result['error']}")
-                    return jsonify({"error": change_result['error']}), 500
-            except Exception as e: logger.error(f"/change error: {e}"); return jsonify({"error": str(e)}), 500
-
-        # --- Approve / Reject ---
-        elif issue.get("pull_request") and comment_body.strip().lower() in ["approve", "reject"]:
-            decision = comment_body.strip().lower()
-            pending = get_pending_fix(pr_number, repo_name)
-            if pending:
-                fix_id, fixed_code, diff_output = pending
-                if decision == "approve":
-                    reply = f"""✅ **Fix Approved!**\n\nHere is the applied fix (diff):\n```\n{diff_output}\n```\n🔔 *Review and merge if satisfied.*"""
-                    update_pending_fix_status(fix_id, 'approved')
-                    post_comment(repo, pr_number, reply)
-                    if org_id: log_audit(org_id, user[0] if user else None, 'approve', pr_number, repo_name, "Approved fix")
-                else:
-                    reply = f"""❌ **Fix Rejected.**\n\nNo changes were made. Run `/fix-ask` again to generate a new suggestion."""
-                    update_pending_fix_status(fix_id, 'rejected')
-                    post_comment(repo, pr_number, reply)
-                    if org_id: log_audit(org_id, user[0] if user else None, 'reject', pr_number, repo_name, "Rejected fix")
-                return jsonify({"msg": f"Fix {decision}ed"}), 200
-            else:
-                post_comment(repo, pr_number, "❌ No pending fix found. Run `/fix-ask` or `/change` first.")
-                return jsonify({"msg": "No pending fix"}), 200
-
-        return jsonify({"msg": "Ignored comment"}), 200
-
-    # ============================================================
-    # PULL REQUEST (AUTO-HEAL + ROI LOGGING + ROUTER)
-    # ============================================================
-    if event == "pull_request" and payload.get("action") in ["opened", "synchronize"]:
-        pr_number = payload["number"]
-        logger.info(f"Processing PR #{pr_number} in {repo_name}")
-        try:
-            if org_api_key:
-                os.environ['LLM_PROVIDER'] = 'deepseek'
-                os.environ['OPENAI_API_KEY'] = org_api_key
-            elif user:
-                os.environ['LLM_PROVIDER'] = user[3]
-                os.environ['OPENAI_API_KEY'] = user[4] or ""
-            os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
-
-            diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-            api_key = user[4] if user else None
-            use_mock = not (org_api_key or api_key)
-            user_model = user[11] if user and len(user) > 11 else None
-            # === USE THE ROUTED ANALYZER ===
-            result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
-            status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
-            comment = f"""🤖 **AI QA Report for PR #{pr_number}**\n\n**Status:** {status}\n\n**Functions Detected:**\n{extract_changed_functions(diff_content)[:500]}...\n\n**AI Suggested Fix (Diff):**\n{result['diff_output'][:1500]}\n\n🔔 *This is an automated analysis. Please review the suggested changes.*"""
-            post_comment(repo, pr_number, comment)
-
-            # ROI LOGGING
-            bugs_found = 1 if result.get('diff_output') and len(result['diff_output']) > 50 else 0
-            time_saved = bugs_found * 10
-            try:
-                conn = sqlite3.connect(DB_PATH)
-                c = conn.cursor()
-                c.execute('''
-                    INSERT INTO pr_analytics (user_id, org_id, pr_number, repo_name, bugs_found, time_saved_minutes)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (user[0] if user else None, org_id, pr_number, repo_name, bugs_found, time_saved))
-                conn.commit()
-                conn.close()
-                logger.info(f"📊 Logged analytics for PR #{pr_number}")
-            except Exception as e: logger.warning(f"Could not log analytics: {e}")
-
-            if org_id:
-                log_audit(org_id, user[0] if user else None, 'auto-fix', pr_number, repo_name, f"Status: {status}")
-            return jsonify({"msg": "PR processed"}), 200
-        except Exception as e:
-            logger.error(f"Error: {e}")
             return jsonify({"error": str(e)}), 500
 
     return jsonify({"msg": "Ignored"}), 200
