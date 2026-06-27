@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Aegis - AI QA Engineer
-Complete Backend + Frontend (Dashboard, Auth, Settings)
+Aegis - Complete Market Ready Backend
+Features: Auth, Dashboard, GitHub OAuth, Stripe Billing, Webhook, AI Engine
 """
 
-# ============================================================
-# 1. IMPORTS & SETUP
-# ============================================================
 import os
 import logging
 import sqlite3
-import hashlib
 import hmac
+import json
+import secrets
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template_string, redirect, url_for, session, flash
+from flask import Flask, request, jsonify, redirect, url_for, session, flash, render_template_string
 from flask_session import Session
 from werkzeug.security import generate_password_hash, check_password_hash
+import requests
+import stripe
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -27,42 +27,59 @@ from pr_analyzer import analyze_pr_diff, extract_changed_functions
 from code_scanner import ask_question_about_code
 
 # ============================================================
-# 2. LOGGING
+# 1. LOGGING
 # ============================================================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# 3. FLASK APP CONFIG
+# 2. FLASK APP CONFIG
 # ============================================================
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
-app.config['SESSION_TYPE'] = 'filesystem'  # Simple server-side sessions
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', secrets.token_hex(32))
+app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_PERMANENT'] = False
 Session(app)
 
 # ============================================================
-# 4. DATABASE SETUP (SQLite)
+# 3. STRIPE CONFIG
+# ============================================================
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+YOUR_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", "https://test-qa-bot-production.up.railway.app")
+
+# ============================================================
+# 4. GITHUB OAUTH CONFIG
+# ============================================================
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
+GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
+GITHUB_OAUTH_URL = "https://github.com/login/oauth/access_token"
+GITHUB_USER_URL = "https://api.github.com/user"
+
+# ============================================================
+# 5. DATABASE SETUP (SQLite)
 # ============================================================
 DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
 
 def init_db():
-    """Create tables if they don't exist."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    # Users table with new fields
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            github_token TEXT,
-            repo_name TEXT,
             provider TEXT DEFAULT 'deepseek',
             api_key TEXT,
+            repo_name TEXT,
+            github_token TEXT,  -- OAuth token
+            stripe_customer_id TEXT,
+            subscription_id TEXT,
+            subscription_status TEXT DEFAULT 'inactive',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    # Table for stats (optional)
     c.execute('''
         CREATE TABLE IF NOT EXISTS pr_stats (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,37 +96,62 @@ def init_db():
 
 init_db()
 
-def get_user_settings(username):
-    """Retrieve settings for a given user."""
+# ============================================================
+# 6. DATABASE HELPERS
+# ============================================================
+def get_user(username):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT provider, api_key, repo_name, github_token FROM users WHERE username = ?', (username,))
-    row = c.fetchone()
+    c.execute('SELECT * FROM users WHERE username = ?', (username,))
+    user = c.fetchone()
     conn.close()
-    if row:
-        return {'provider': row[0], 'api_key': row[1], 'repo_name': row[2], 'github_token': row[3]}
-    return None
+    return user
 
-def update_user_settings(username, provider, api_key, repo_name, github_token=None):
-    """Update user settings."""
+def get_user_by_id(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT * FROM users WHERE id = ?', (user_id,))
+    user = c.fetchone()
+    conn.close()
+    return user
+
+def update_user_settings(user_id, provider=None, api_key=None, repo_name=None, github_token=None):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
         UPDATE users 
-        SET provider = ?, api_key = ?, repo_name = ?, github_token = COALESCE(?, github_token)
-        WHERE username = ?
-    ''', (provider, api_key, repo_name, github_token, username))
+        SET provider = COALESCE(?, provider),
+            api_key = COALESCE(?, api_key),
+            repo_name = COALESCE(?, repo_name),
+            github_token = COALESCE(?, github_token)
+        WHERE id = ?
+    ''', (provider, api_key, repo_name, github_token, user_id))
     conn.commit()
     conn.close()
 
-# ============================================================
-# 5. WEBHOOK & CORE ROUTES (unchanged logic)
-# ============================================================
+def update_subscription(user_id, customer_id, subscription_id, status):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        UPDATE users 
+        SET stripe_customer_id = ?, subscription_id = ?, subscription_status = ?
+        WHERE id = ?
+    ''', (customer_id, subscription_id, status, user_id))
+    conn.commit()
+    conn.close()
 
-# Global fallback for webhook (uses environment variables if user not found)
+def get_user_by_github_repo(repo_name):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT * FROM users WHERE repo_name = ? ORDER BY id LIMIT 1', (repo_name,))
+    user = c.fetchone()
+    conn.close()
+    return user
+
+# ============================================================
+# 7. WEBHOOK (Uses OAuth token if available)
+# ============================================================
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 def verify_signature(payload_body, signature_header):
     if not signature_header or not GITHUB_SECRET:
@@ -124,7 +166,6 @@ def health_check():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    # Verify signature
     signature = request.headers.get("X-Hub-Signature-256")
     if not verify_signature(request.data, signature):
         logger.warning("Invalid signature")
@@ -132,45 +173,33 @@ def webhook():
 
     event = request.headers.get("X-GitHub-Event")
     payload = request.get_json()
+    repo_name = payload.get("repository", {}).get("full_name")
 
     if event == "ping":
         return jsonify({"msg": "pong"}), 200
 
-    # Try to get user settings based on repo (if we have a repo_name in payload)
-    # For MVP, we use the first user's settings (if no user context, fallback to env)
-    # In a real multi-tenant setup, you'd map repo to user.
-    repo_name = payload.get("repository", {}).get("full_name")
-    user_settings = None
-    if repo_name:
-        # Find user with this repo
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute('SELECT username, provider, api_key FROM users WHERE repo_name = ?', (repo_name,))
-        row = c.fetchone()
-        conn.close()
-        if row:
-            # We'll set environment variables temporarily for this request
-            # For simplicity, we just store them in a global variable or use them directly
-            # But since we have multiple functions that expect env vars, we can set os.environ
-            # This is a bit hacky but works for MVP
-            user_settings = {'provider': row[1], 'api_key': row[2], 'username': row[0]}
+    # Find user by repo
+    user = get_user_by_github_repo(repo_name)
+    if not user:
+        logger.warning(f"No user found for repo {repo_name}, falling back to env tokens.")
+        # Fallback to env (Mock Mode)
+        user = None
 
-    # Override environment for this request (if user settings found)
-    if user_settings:
-        os.environ['LLM_PROVIDER'] = user_settings['provider']
-        os.environ['OPENAI_API_KEY'] = user_settings['api_key']  # we'll map later
-
-    # --- Chatbot (issue_comment) ---
+    # --- Chatbot ---
     if event == "issue_comment":
         issue = payload.get("issue", {})
         comment_body = payload.get("comment", {}).get("body", "")
         pr_number = issue.get("number")
-        repo_name = payload["repository"]["full_name"]
-
         if issue.get("pull_request") and comment_body.strip().startswith("/ask"):
             logger.info(f"💬 Chatbot triggered on PR #{pr_number} in {repo_name}")
             question = comment_body.replace("/ask", "").strip() or "What does this code do?"
             try:
+                # Override env for this request if user exists
+                if user:
+                    os.environ['LLM_PROVIDER'] = user[3]  # provider
+                    os.environ['OPENAI_API_KEY'] = user[4] or ""
+                    os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
+                
                 diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
                 answer = ask_question_about_code(question, diff_content)
                 post_comment(repo, pr_number, f"🤖 **AI Chatbot:**\n\n{answer}")
@@ -181,19 +210,20 @@ def webhook():
                 return jsonify({"error": str(e)}), 500
         return jsonify({"msg": "Ignored comment"}), 200
 
-    # --- Pull Request event ---
+    # --- Pull Request ---
     if event == "pull_request" and payload.get("action") in ["opened", "synchronize"]:
         pr_number = payload["number"]
-        repo_name = payload["repository"]["full_name"]
         logger.info(f"🔍 Processing PR #{pr_number} in {repo_name}")
-
         try:
+            if user:
+                os.environ['LLM_PROVIDER'] = user[3]
+                os.environ['OPENAI_API_KEY'] = user[4] or ""
+                os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
+            
             diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-            # Determine if we have API key (from user settings or env)
-            api_key = user_settings['api_key'] if user_settings else None
+            api_key = user[4] if user else None
             use_mock = not api_key
             result = analyze_pr_diff(diff_content, use_mock=use_mock)
-
             status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
             comment = f"""🤖 **AI QA Report for PR #{pr_number}**
 
@@ -211,16 +241,14 @@ def webhook():
             logger.info(f"✅ Comment posted to PR #{pr_number}")
             return jsonify({"msg": "PR processed"}), 200
         except Exception as e:
-            logger.error(f"❌ Error processing PR: {e}")
+            logger.error(f"❌ Error: {e}")
             return jsonify({"error": str(e)}), 500
 
     return jsonify({"msg": "Ignored"}), 200
 
 # ============================================================
-# 6. FRONTEND ROUTES (Authentication + Dashboard)
+# 8. FRONTEND & DASHBOARD (OAuth & Stripe UI integrated)
 # ============================================================
-
-# Helper to load HTML from file
 def load_html(filename):
     path = os.path.join(os.path.dirname(__file__), 'frontend', filename)
     with open(path, 'r') as f:
@@ -230,7 +258,6 @@ def load_html(filename):
 def home():
     if 'user_id' in session:
         return redirect(url_for('dashboard'))
-    # Serve landing page
     try:
         return load_html('index.html')
     except:
@@ -244,7 +271,6 @@ def signup():
         if not username or not password:
             flash('Username and password required')
             return redirect(url_for('signup'))
-        # Hash password
         password_hash = generate_password_hash(password)
         try:
             conn = sqlite3.connect(DB_PATH)
@@ -257,7 +283,6 @@ def signup():
         except sqlite3.IntegrityError:
             flash('Username already exists.')
             return redirect(url_for('signup'))
-    # GET: show signup form (simple HTML)
     return '''
         <!DOCTYPE html>
         <html>
@@ -283,11 +308,7 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute('SELECT id, username, password_hash FROM users WHERE username = ?', (username,))
-        user = c.fetchone()
-        conn.close()
+        user = get_user(username)
         if user and check_password_hash(user[2], password):
             session['user_id'] = user[0]
             session['username'] = user[1]
@@ -321,34 +342,183 @@ def logout():
     flash('Logged out.')
     return redirect(url_for('home'))
 
+# ============================================================
+# 9. GITHUB OAUTH ROUTES
+# ============================================================
+@app.route("/github-oauth/authorize")
+def github_oauth_authorize():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+    redirect_uri = f"{YOUR_DOMAIN}/github-oauth/callback"
+    return redirect(f"https://github.com/login/oauth/authorize?client_id={GITHUB_CLIENT_ID}&redirect_uri={redirect_uri}&scope=repo")
+
+@app.route("/github-oauth/callback")
+def github_oauth_callback():
+    code = request.args.get('code')
+    if not code:
+        flash('Authorization failed.')
+        return redirect(url_for('dashboard'))
+
+    # Exchange code for token
+    resp = requests.post(
+        GITHUB_OAUTH_URL,
+        headers={'Accept': 'application/json'},
+        data={'client_id': GITHUB_CLIENT_ID, 'client_secret': GITHUB_CLIENT_SECRET, 'code': code}
+    )
+    data = resp.json()
+    if 'access_token' not in data:
+        flash('Failed to get access token.')
+        return redirect(url_for('dashboard'))
+
+    access_token = data['access_token']
+    user_id = session['user_id']
+    
+    # Fetch GitHub username to display (optional)
+    headers = {'Authorization': f'token {access_token}'}
+    user_info = requests.get(GITHUB_USER_URL, headers=headers).json()
+    github_username = user_info.get('login', 'Unknown')
+
+    # Save token to user
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('UPDATE users SET github_token = ? WHERE id = ?', (access_token, user_id))
+    conn.commit()
+    conn.close()
+
+    flash(f'GitHub account "{github_username}" connected successfully!')
+    return redirect(url_for('dashboard'))
+
+# ============================================================
+# 10. STRIPE BILLING ROUTES
+# ============================================================
+@app.route("/create-checkout-session", methods=['POST'])
+def create_checkout_session():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    user = get_user_by_id(session['user_id'])
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    # Price IDs from Stripe Dashboard
+    PRICE_IDS = {
+        'monthly': os.getenv("STRIPE_PRICE_MONTHLY"),
+        'yearly': os.getenv("STRIPE_PRICE_YEARLY")  # Optional
+    }
+    price_id = PRICE_IDS.get('monthly')
+    if not price_id:
+        return jsonify({"error": "Stripe price ID not configured"}), 500
+
+    try:
+        checkout_session = stripe.checkout.Session.create(
+            customer=user[7] or None,  # stripe_customer_id
+            payment_method_types=['card'],
+            line_items=[{'price': price_id, 'quantity': 1}],
+            mode='subscription',
+            success_url=f"{YOUR_DOMAIN}/dashboard?success=true",
+            cancel_url=f"{YOUR_DOMAIN}/dashboard?canceled=true",
+            metadata={'user_id': user[0]}
+        )
+        return jsonify({'url': checkout_session.url})
+    except Exception as e:
+        logger.error(f"Stripe error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/stripe-webhook", methods=['POST'])
+def stripe_webhook():
+    payload = request.get_data(as_text=True)
+    sig_header = request.headers.get('Stripe-Signature')
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
+    except ValueError:
+        return jsonify({"error": "Invalid payload"}), 400
+    except stripe.error.SignatureVerificationError:
+        return jsonify({"error": "Invalid signature"}), 400
+
+    data_object = event['data']['object']
+    
+    # Handle subscription events
+    if event['type'] == 'checkout.session.completed':
+        session_data = data_object
+        customer_id = session_data['customer']
+        subscription_id = session_data['subscription']
+        user_id = int(session_data['metadata']['user_id'])
+        
+        # Fetch subscription details to get status
+        sub = stripe.Subscription.retrieve(subscription_id)
+        status = sub.status  # 'active', 'past_due', etc.
+        update_subscription(user_id, customer_id, subscription_id, status)
+        logger.info(f"Subscription {subscription_id} activated for user {user_id}")
+
+    elif event['type'] == 'customer.subscription.updated':
+        subscription = data_object
+        customer_id = subscription['customer']
+        status = subscription['status']
+        # Find user by customer_id
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('UPDATE users SET subscription_status = ? WHERE stripe_customer_id = ?', (status, customer_id))
+        conn.commit()
+        conn.close()
+        logger.info(f"Subscription {subscription['id']} updated to {status}")
+
+    elif event['type'] == 'customer.subscription.deleted':
+        subscription = data_object
+        customer_id = subscription['customer']
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('UPDATE users SET subscription_status = "canceled" WHERE stripe_customer_id = ?', (customer_id,))
+        conn.commit()
+        conn.close()
+        logger.info(f"Subscription {subscription['id']} canceled")
+
+    return jsonify({"status": "success"}), 200
+
 @app.route("/dashboard", methods=['GET', 'POST'])
 def dashboard():
     if 'user_id' not in session:
         return redirect(url_for('login'))
-    username = session['username']
-
+    
+    user_id = session['user_id']
+    user = get_user_by_id(user_id)
+    
     if request.method == 'POST':
-        # Update settings
         provider = request.form.get('provider')
         api_key = request.form.get('api_key')
         repo_name = request.form.get('repo_name')
-        github_token = request.form.get('github_token')  # optional for now
-        update_user_settings(username, provider, api_key, repo_name, github_token)
-        flash('Settings saved successfully!')
+        
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('''
+            UPDATE users SET provider = ?, api_key = ?, repo_name = ?
+            WHERE id = ?
+        ''', (provider, api_key, repo_name, user_id))
+        conn.commit()
+        conn.close()
+        flash('Settings saved!')
         return redirect(url_for('dashboard'))
-
-    # GET: load settings
-    settings = get_user_settings(username) or {}
-    # Serve dashboard HTML with placeholders
+    
+    # Load HTML and inject dynamic values
     html = load_html('dashboard.html')
-    # Replace placeholders with actual values (basic string replacement)
-    html = html.replace('value="deepseek"', f'value="{settings.get("provider", "deepseek")}" selected')
-    html = html.replace('placeholder="owner/repo"', f'value="{settings.get("repo_name", "")}"')
-    html = html.replace('placeholder="sk-..."', f'value="{settings.get("api_key", "")}"')
+    # Basic string replacement for simplicity
+    html = html.replace('value="deepseek"', f'value="{user[3]}" selected' if user[3] == 'deepseek' else 'value="deepseek"')
+    html = html.replace('placeholder="owner/repo"', f'value="{user[5] or ""}"')
+    html = html.replace('placeholder="sk-..."', f'value="{user[4] or ""}"')
+    
+    # Update status badges
+    sub_status = user[9] or 'inactive'
+    if sub_status == 'active':
+        html = html.replace('Billing Status: Inactive', 'Billing Status: ✅ Active')
+    else:
+        html = html.replace('Billing Status: Inactive', 'Billing Status: ❌ Inactive')
+    
+    github_status = '✅ Connected' if user[6] else '❌ Not Connected'
+    html = html.replace('GitHub Status: Not Connected', f'GitHub Status: {github_status}')
+    
     return html
 
 # ============================================================
-# 7. RUN APP
+# 11. RUN APP
 # ============================================================
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5001))
