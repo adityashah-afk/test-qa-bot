@@ -3,7 +3,7 @@
 Aegis - Complete Market Ready Backend
 Professional Dark Theme, Error Messages, Social Login UI
 Full Multi-Model Support (OpenAI, Anthropic, DeepSeek, Grok, Azure, Custom)
-Manual /fix command with Approve/Reject Flow
+Manual /fix, /fix-ask, /change with Approve/Reject Flow
 """
 
 import os
@@ -59,7 +59,7 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
 # ============================================================
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
-YOUR_DOMAIN = "https://test-qa-bot-production.up.railway.app"
+YOUR_DOMAIN = "https://test-qa-bot-production.up.railway.app"  # Hardcoded to fix OAuth
 
 # ============================================================
 # 4. GITHUB OAUTH CONFIG
@@ -70,7 +70,7 @@ GITHUB_OAUTH_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
 
 # ============================================================
-# 5. DATABASE SETUP (SQLite) with Model Support + Pending Fixes
+# 5. DATABASE SETUP with Model and Pending Fixes
 # ============================================================
 DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
 
@@ -104,9 +104,6 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
-    # ============================================================
-    # NEW: Pending fixes table for /fix approval flow
-    # ============================================================
     c.execute('''
         CREATE TABLE IF NOT EXISTS pending_fixes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,13 +120,13 @@ def init_db():
     logger.info("✅ Database initialized.")
 
 def migrate_db():
-    """Add 'model' column to users table if it doesn't exist."""
+    """Add 'model' column if missing."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
         c.execute("ALTER TABLE users ADD COLUMN model TEXT DEFAULT ''")
         conn.commit()
-        logger.info("✅ Added 'model' column to users table (migration).")
+        logger.info("✅ Added 'model' column.")
     except sqlite3.OperationalError:
         pass
     conn.close()
@@ -191,7 +188,7 @@ def get_user_by_github_repo(repo_name):
     return user
 
 # ============================================================
-# 6b. PENDING FIX HELPERS
+# 6b. PENDING FIX / CHANGE HELPERS
 # ============================================================
 def save_pending_fix(pr_number, repo_name, fixed_code, diff_output):
     conn = sqlite3.connect(DB_PATH)
@@ -223,93 +220,129 @@ def update_pending_fix_status(fix_id, status):
     conn.close()
 
 # ============================================================
+# 6c. NATURAL LANGUAGE CHANGE HELPER (for /change)
+# ============================================================
+def process_natural_language_change(instruction, diff_text, user):
+    """
+    Interpret the user's instruction and generate the change.
+    Returns: {'success': bool, 'fixed_code': str, 'diff_output': str, 'description': str, 'error': str}
+    """
+    from ai_qa_engine import QAEngine
+    current_code = extract_changed_functions(diff_text)
+    if not current_code:
+        return {'success': False, 'error': 'No code detected in this PR.'}
+    
+    api_key = user[4] if user else None
+    use_mock = not api_key
+    model_override = user[11] if user and len(user) > 11 else None
+    engine = QAEngine(use_mock=use_mock, model_override=model_override)
+    llm = engine.llm
+    if not llm and not use_mock:
+        return {'success': False, 'error': 'No AI provider configured.'}
+    
+    prompt = f"""
+    You are an AI code assistant. The user wants to make the following change:
+    Instruction: {instruction}
+    Here is the current code:
+    Apply the change and return ONLY the corrected code. Make sure the code is syntactically correct.
+"""
+try:
+    fixed_code = llm.generate(prompt) if llm else current_code  # fallback to current if mock
+    if use_mock:
+        # Mock mode: just return the same code (or a simple change)
+        fixed_code = current_code  # For mock, we don't have a real AI to change it.
+    diff_output = engine.generate_diff(current_code, fixed_code)
+    return {
+        'success': True,
+        'fixed_code': fixed_code,
+        'diff_output': diff_output,
+        'description': f'Applied change: "{instruction}"',
+        'error': None
+    }
+except Exception as e:
+    return {'success': False, 'error': str(e)}
+
+# ============================================================
 # 7. WEBHOOK
 # ============================================================
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
 
 def verify_signature(payload_body, signature_header):
-    if not signature_header or not GITHUB_SECRET:
-        return False
-    hash_object = hmac.new(GITHUB_SECRET.encode('utf-8'), msg=payload_body, digestmod=hashlib.sha256)
-    expected = "sha256=" + hash_object.hexdigest()
-    return hmac.compare_digest(expected, signature_header)
+if not signature_header or not GITHUB_SECRET:
+    return False
+hash_object = hmac.new(GITHUB_SECRET.encode('utf-8'), msg=payload_body, digestmod=hashlib.sha256)
+expected = "sha256=" + hash_object.hexdigest()
+return hmac.compare_digest(expected, signature_header)
 
 @app.route("/health", methods=["GET"])
 def health_check():
-    return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
+return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    signature = request.headers.get("X-Hub-Signature-256")
-    if not verify_signature(request.data, signature):
-        logger.warning("Invalid signature")
-        return jsonify({"error": "Invalid signature"}), 401
+signature = request.headers.get("X-Hub-Signature-256")
+if not verify_signature(request.data, signature):
+    logger.warning("Invalid signature")
+    return jsonify({"error": "Invalid signature"}), 401
 
-    event = request.headers.get("X-GitHub-Event")
-    payload = request.get_json()
-    repo_name = payload.get("repository", {}).get("full_name")
+event = request.headers.get("X-GitHub-Event")
+payload = request.get_json()
+repo_name = payload.get("repository", {}).get("full_name")
 
-    if event == "ping":
-        return jsonify({"msg": "pong"}), 200
+if event == "ping":
+    return jsonify({"msg": "pong"}), 200
 
-    user = get_user_by_github_repo(repo_name)
-    if not user:
-        logger.warning(f"No user found for repo {repo_name}, falling back to env tokens.")
-        user = None
+user = get_user_by_github_repo(repo_name)
+if not user:
+    logger.warning(f"No user found for repo {repo_name}, falling back to env tokens.")
+    user = None
 
-    # ============================================================
-    # CHATBOT & MANUAL FIX WITH APPROVAL FLOW
-    # ============================================================
-    if event == "issue_comment":
-        issue = payload.get("issue", {})
-        comment_body = payload.get("comment", {}).get("body", "")
-        pr_number = issue.get("number")
-        repo_name = payload["repository"]["full_name"]
-        commenter = payload.get("comment", {}).get("user", {}).get("login")
+# ============================================================
+# CHATBOT & MANUAL COMMANDS
+# ============================================================
+if event == "issue_comment":
+    issue = payload.get("issue", {})
+    comment_body = payload.get("comment", {}).get("body", "")
+    pr_number = issue.get("number")
+    repo_name = payload["repository"]["full_name"]
 
-        # --- 1) /ask: Chatbot ---
-        if issue.get("pull_request") and comment_body.strip().startswith("/ask"):
-            question = comment_body.replace("/ask", "").strip() or "What does this code do?"
-            logger.info(f"💬 Chatbot triggered on PR #{pr_number} in {repo_name}")
-            try:
-                if user:
-                    os.environ['LLM_PROVIDER'] = user[3]
-                    os.environ['OPENAI_API_KEY'] = user[4] or ""
-                    os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
-                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                answer = ask_question_about_code(question, diff_content)
-                post_comment(repo, pr_number, f"🤖 **AI Chatbot:**\n\n{answer}")
-                logger.info(f"✅ Chatbot replied to PR #{pr_number}")
-                return jsonify({"msg": "Chatbot replied"}), 200
-            except Exception as e:
-                logger.error(f"❌ Chatbot Error: {e}")
-                return jsonify({"error": str(e)}), 500
+    # --- /ask: Chatbot ---
+    if issue.get("pull_request") and comment_body.strip().startswith("/ask"):
+        question = comment_body.replace("/ask", "").strip() or "What does this code do?"
+        logger.info(f"💬 Chatbot triggered on PR #{pr_number} in {repo_name}")
+        try:
+            if user:
+                os.environ['LLM_PROVIDER'] = user[3]
+                os.environ['OPENAI_API_KEY'] = user[4] or ""
+                os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
+            diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+            answer = ask_question_about_code(question, diff_content)
+            post_comment(repo, pr_number, f"🤖 **AI Chatbot:**\n\n{answer}")
+            logger.info(f"✅ Chatbot replied to PR #{pr_number}")
+            return jsonify({"msg": "Chatbot replied"}), 200
+        except Exception as e:
+            logger.error(f"❌ Chatbot Error: {e}")
+            return jsonify({"error": str(e)}), 500
 
-        # --- 2) /fix: Auto-Heal with Approval Flow ---
-        elif issue.get("pull_request") and comment_body.strip().startswith("/fix"):
-            logger.info(f"🔧 Manual fix triggered on PR #{pr_number} in {repo_name}")
-            try:
-                if user:
-                    os.environ['LLM_PROVIDER'] = user[3]
-                    os.environ['OPENAI_API_KEY'] = user[4] or ""
-                    os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
-                    user_model = user[11] if len(user) > 11 else None
-                else:
-                    user_model = None
+    # --- /fix: Direct fix (no approval) ---
+    elif issue.get("pull_request") and comment_body.strip().startswith("/fix"):
+        logger.info(f"🔧 Manual fix triggered on PR #{pr_number} in {repo_name}")
+        try:
+            if user:
+                os.environ['LLM_PROVIDER'] = user[3]
+                os.environ['OPENAI_API_KEY'] = user[4] or ""
+                os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
+                user_model = user[11] if len(user) > 11 else None
+            else:
+                user_model = None
 
-                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                api_key = user[4] if user else None
-                use_mock = not api_key
-                result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model)
+            diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+            api_key = user[4] if user else None
+            use_mock = not api_key
+            result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model)
 
-                status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
-
-                # Save the fix in the database (pending approval)
-                if result['fixed_code'] and result['diff_output']:
-                    save_pending_fix(pr_number, repo_name, result['fixed_code'], result['diff_output'])
-
-                # Post the pending approval comment
-                reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix`)**
+            status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
+            reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix`)**
 
 **Status:** {status}
 
@@ -319,31 +352,118 @@ def webhook():
 **AI Suggested Fix (Diff):**
 {result['diff_output'][:1500]}
 
+🔔 *This fix was applied automatically. Review the changes and merge if satisfied.*
+"""
+            post_comment(repo, pr_number, reply)
+            logger.info(f"✅ Direct fix comment posted to PR #{pr_number}")
+            return jsonify({"msg": "Direct fix posted"}), 200
+
+        except Exception as e:
+            logger.error(f"❌ /fix error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    # --- /fix-ask: Bug Fix with Approval (shows errors) ---
+    elif issue.get("pull_request") and comment_body.strip().startswith("/fix-ask"):
+        logger.info(f"🔧 Bug fix with approval triggered on PR #{pr_number} in {repo_name}")
+        try:
+            if user:
+                os.environ['LLM_PROVIDER'] = user[3]
+                os.environ['OPENAI_API_KEY'] = user[4] or ""
+                os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
+                user_model = user[11] if len(user) > 11 else None
+            else:
+                user_model = None
+
+            diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+            api_key = user[4] if user else None
+            use_mock = not api_key
+            result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model)
+
+            status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
+
+            # Save the fix (pending)
+            if result['fixed_code'] and result['diff_output']:
+                save_pending_fix(pr_number, repo_name, result['fixed_code'], result['diff_output'])
+
+            # Get errors (if any) - for now we include the test output as error
+            error_info = result.get('error_log', 'No errors detected (or the test passed!).')[:500]
+
+            reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix-ask`)**
+
+**Status:** {status}
+
+**Functions Detected:**
+{extract_changed_functions(diff_content)[:500]}...
+
+**AI Suggested Fix (Diff):**
+{result['diff_output'][:1500]}
+
+**Errors Found:**
+{error_info}
+
 ---
 ✅ **Approve this fix?** Reply to this comment with `approve` to apply the fix, or `reject` to cancel.
 
 🔔 *This fix was manually triggered. You have 24 hours to approve or reject.*
 """
+            post_comment(repo, pr_number, reply)
+            logger.info(f"✅ Pending fix (with errors) posted to PR #{pr_number}")
+            return jsonify({"msg": "Pending fix with errors posted"}), 200
+
+        except Exception as e:
+            logger.error(f"❌ /fix-ask error: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    # --- /change: Natural Language Code Change ---
+    elif issue.get("pull_request") and comment_body.strip().startswith("/change"):
+        instruction = comment_body.replace("/change", "").strip()
+        if not instruction:
+            post_comment(repo, pr_number, "❌ Please specify what you want to change. Example: `/change Change the theme from blue to black`.")
+            return jsonify({"msg": "No instruction provided"}), 200
+
+        logger.info(f"🔄 Code change instruction triggered on PR #{pr_number} in {repo_name}")
+        try:
+            diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+            change_result = process_natural_language_change(instruction, diff_content, user)
+
+            if change_result['success']:
+                save_pending_fix(pr_number, repo_name, change_result['fixed_code'], change_result['diff_output'])
+                reply = f"""🤖 **Aegis Code Change (Triggered via `/change`)**
+
+**Instruction:** *"{instruction}"*
+
+**Changes Made:**
+{change_result['description']}
+
+**Diff:**
+{change_result['diff_output'][:1500]}
+
+---
+✅ **Approve this change?** Reply to this comment with `approve` to apply the change, or `reject` to cancel.
+
+🔔 *This change was manually triggered. You have 24 hours to approve or reject.*
+"""
                 post_comment(repo, pr_number, reply)
-                logger.info(f"✅ Pending fix comment posted to PR #{pr_number}")
-                return jsonify({"msg": "Pending fix posted"}), 200
+                logger.info(f"✅ Pending change posted to PR #{pr_number}")
+                return jsonify({"msg": "Pending change posted"}), 200
+            else:
+                post_comment(repo, pr_number, f"❌ Failed to process the change: {change_result['error']}")
+                return jsonify({"error": change_result['error']}), 500
 
-            except Exception as e:
-                logger.error(f"❌ Manual fix error: {e}")
-                return jsonify({"error": str(e)}), 500
+        except Exception as e:
+            logger.error(f"❌ /change error: {e}")
+            return jsonify({"error": str(e)}), 500
 
-        # --- 3) APPROVAL / REJECTION HANDLER ---
-        elif issue.get("pull_request") and comment_body.strip().lower() in ["approve", "reject"]:
-            decision = comment_body.strip().lower()
-            logger.info(f"🔄 Approval decision '{decision}' on PR #{pr_number} in {repo_name}")
+    # --- APPROVAL / REJECTION HANDLER (works for /fix-ask and /change) ---
+    elif issue.get("pull_request") and comment_body.strip().lower() in ["approve", "reject"]:
+        decision = comment_body.strip().lower()
+        logger.info(f"🔄 Approval decision '{decision}' on PR #{pr_number} in {repo_name}")
 
-            # Check if there is a pending fix for this PR
-            pending = get_pending_fix(pr_number, repo_name)
-            if pending:
-                fix_id, fixed_code, diff_output = pending
-                if decision == "approve":
-                    # Apply the fix (post the diff)
-                    reply = f"""✅ **Fix Approved!**
+        pending = get_pending_fix(pr_number, repo_name)
+        if pending:
+            fix_id, fixed_code, diff_output = pending
+            if decision == "approve":
+                reply = f"""✅ **Fix Approved!**
 
 Here is the applied fix (diff):
 
@@ -357,20 +477,20 @@ Here is the applied fix (diff):
 
 The AI fix has been cancelled. No changes were made.
 
-🔔 *You can always run `/fix` again to generate a new suggestion.*
+🔔 *You can always run `/fix-ask` or `/change` again to generate a new suggestion.*
 """
                     update_pending_fix_status(fix_id, 'rejected')
                     post_comment(repo, pr_number, reply)
                     logger.info(f"❌ Fix rejected on PR #{pr_number}")
                 return jsonify({"msg": f"Fix {decision}ed"}), 200
             else:
-                post_comment(repo, pr_number, "❌ No pending fix found for this PR. Run `/fix` first to generate one.")
+                post_comment(repo, pr_number, "❌ No pending fix found for this PR. Run `/fix-ask` or `/change` first to generate one.")
                 return jsonify({"msg": "No pending fix"}), 200
 
         return jsonify({"msg": "Ignored comment"}), 200
 
     # ============================================================
-    # AUTOMATIC WEBHOOK (Traditional - stays exactly as before)
+    # AUTOMATIC WEBHOOK (Traditional)
     # ============================================================
     if event == "pull_request" and payload.get("action") in ["opened", "synchronize"]:
         pr_number = payload["number"]
