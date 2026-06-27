@@ -3,6 +3,7 @@
 Aegis - Complete Market Ready Backend
 Professional Dark Theme, Error Messages, Social Login UI
 Full Multi-Model Support (OpenAI, Anthropic, DeepSeek, Grok, Azure, Custom)
+Manual /fix command with Approve/Reject Flow
 """
 
 import os
@@ -58,7 +59,7 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
 # ============================================================
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
-YOUR_DOMAIN = "https://test-qa-bot-production.up.railway.app"  # Hardcoded to fix OAuth redirect_uri issue
+YOUR_DOMAIN = "https://test-qa-bot-production.up.railway.app"
 
 # ============================================================
 # 4. GITHUB OAUTH CONFIG
@@ -69,7 +70,7 @@ GITHUB_OAUTH_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
 
 # ============================================================
-# 5. DATABASE SETUP (SQLite) with Model Support
+# 5. DATABASE SETUP (SQLite) with Model Support + Pending Fixes
 # ============================================================
 DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
 
@@ -89,7 +90,7 @@ def init_db():
             subscription_id TEXT,
             subscription_status TEXT DEFAULT 'inactive',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            model TEXT DEFAULT ''  -- <-- NEW: User selects any model name
+            model TEXT DEFAULT ''
         )
     ''')
     c.execute('''
@@ -103,12 +104,26 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
+    # ============================================================
+    # NEW: Pending fixes table for /fix approval flow
+    # ============================================================
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pending_fixes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pr_number INTEGER,
+            repo_name TEXT,
+            fixed_code TEXT,
+            diff_output TEXT,
+            status TEXT DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     conn.commit()
     conn.close()
     logger.info("✅ Database initialized.")
 
 def migrate_db():
-    """Add 'model' column to users table if it doesn't exist (for existing deployments)."""
+    """Add 'model' column to users table if it doesn't exist."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     try:
@@ -116,12 +131,11 @@ def migrate_db():
         conn.commit()
         logger.info("✅ Added 'model' column to users table (migration).")
     except sqlite3.OperationalError:
-        # Column already exists
         pass
     conn.close()
 
 init_db()
-migrate_db()  # Run migration on startup
+migrate_db()
 
 # ============================================================
 # 6. DATABASE HELPERS
@@ -177,6 +191,38 @@ def get_user_by_github_repo(repo_name):
     return user
 
 # ============================================================
+# 6b. PENDING FIX HELPERS
+# ============================================================
+def save_pending_fix(pr_number, repo_name, fixed_code, diff_output):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO pending_fixes (pr_number, repo_name, fixed_code, diff_output, status)
+        VALUES (?, ?, ?, ?, 'pending')
+    ''', (pr_number, repo_name, fixed_code, diff_output))
+    conn.commit()
+    conn.close()
+
+def get_pending_fix(pr_number, repo_name):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        SELECT id, fixed_code, diff_output FROM pending_fixes
+        WHERE pr_number = ? AND repo_name = ? AND status = 'pending'
+        ORDER BY created_at DESC LIMIT 1
+    ''', (pr_number, repo_name))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def update_pending_fix_status(fix_id, status):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('UPDATE pending_fixes SET status = ? WHERE id = ?', (status, fix_id))
+    conn.commit()
+    conn.close()
+
+# ============================================================
 # 7. WEBHOOK
 # ============================================================
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
@@ -211,14 +257,20 @@ def webhook():
         logger.warning(f"No user found for repo {repo_name}, falling back to env tokens.")
         user = None
 
-    # --- Chatbot ---
+    # ============================================================
+    # CHATBOT & MANUAL FIX WITH APPROVAL FLOW
+    # ============================================================
     if event == "issue_comment":
         issue = payload.get("issue", {})
         comment_body = payload.get("comment", {}).get("body", "")
         pr_number = issue.get("number")
+        repo_name = payload["repository"]["full_name"]
+        commenter = payload.get("comment", {}).get("user", {}).get("login")
+
+        # --- 1) /ask: Chatbot ---
         if issue.get("pull_request") and comment_body.strip().startswith("/ask"):
-            logger.info(f"💬 Chatbot triggered on PR #{pr_number} in {repo_name}")
             question = comment_body.replace("/ask", "").strip() or "What does this code do?"
+            logger.info(f"💬 Chatbot triggered on PR #{pr_number} in {repo_name}")
             try:
                 if user:
                     os.environ['LLM_PROVIDER'] = user[3]
@@ -232,9 +284,94 @@ def webhook():
             except Exception as e:
                 logger.error(f"❌ Chatbot Error: {e}")
                 return jsonify({"error": str(e)}), 500
+
+        # --- 2) /fix: Auto-Heal with Approval Flow ---
+        elif issue.get("pull_request") and comment_body.strip().startswith("/fix"):
+            logger.info(f"🔧 Manual fix triggered on PR #{pr_number} in {repo_name}")
+            try:
+                if user:
+                    os.environ['LLM_PROVIDER'] = user[3]
+                    os.environ['OPENAI_API_KEY'] = user[4] or ""
+                    os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
+                    user_model = user[11] if len(user) > 11 else None
+                else:
+                    user_model = None
+
+                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+                api_key = user[4] if user else None
+                use_mock = not api_key
+                result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model)
+
+                status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
+
+                # Save the fix in the database (pending approval)
+                if result['fixed_code'] and result['diff_output']:
+                    save_pending_fix(pr_number, repo_name, result['fixed_code'], result['diff_output'])
+
+                # Post the pending approval comment
+                reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix`)**
+
+**Status:** {status}
+
+**Functions Detected:**
+{extract_changed_functions(diff_content)[:500]}...
+
+**AI Suggested Fix (Diff):**
+{result['diff_output'][:1500]}
+
+---
+✅ **Approve this fix?** Reply to this comment with `approve` to apply the fix, or `reject` to cancel.
+
+🔔 *This fix was manually triggered. You have 24 hours to approve or reject.*
+"""
+                post_comment(repo, pr_number, reply)
+                logger.info(f"✅ Pending fix comment posted to PR #{pr_number}")
+                return jsonify({"msg": "Pending fix posted"}), 200
+
+            except Exception as e:
+                logger.error(f"❌ Manual fix error: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        # --- 3) APPROVAL / REJECTION HANDLER ---
+        elif issue.get("pull_request") and comment_body.strip().lower() in ["approve", "reject"]:
+            decision = comment_body.strip().lower()
+            logger.info(f"🔄 Approval decision '{decision}' on PR #{pr_number} in {repo_name}")
+
+            # Check if there is a pending fix for this PR
+            pending = get_pending_fix(pr_number, repo_name)
+            if pending:
+                fix_id, fixed_code, diff_output = pending
+                if decision == "approve":
+                    # Apply the fix (post the diff)
+                    reply = f"""✅ **Fix Approved!**
+
+Here is the applied fix (diff):
+
+🔔 *The fix has been generated. Please review the changes and merge if satisfied.*
+"""
+                    update_pending_fix_status(fix_id, 'approved')
+                    post_comment(repo, pr_number, reply)
+                    logger.info(f"✅ Fix approved and posted to PR #{pr_number}")
+                else:  # reject
+                    reply = f"""❌ **Fix Rejected.**
+
+The AI fix has been cancelled. No changes were made.
+
+🔔 *You can always run `/fix` again to generate a new suggestion.*
+"""
+                    update_pending_fix_status(fix_id, 'rejected')
+                    post_comment(repo, pr_number, reply)
+                    logger.info(f"❌ Fix rejected on PR #{pr_number}")
+                return jsonify({"msg": f"Fix {decision}ed"}), 200
+            else:
+                post_comment(repo, pr_number, "❌ No pending fix found for this PR. Run `/fix` first to generate one.")
+                return jsonify({"msg": "No pending fix"}), 200
+
         return jsonify({"msg": "Ignored comment"}), 200
 
-    # --- Pull Request (Passes the model to the engine) ---
+    # ============================================================
+    # AUTOMATIC WEBHOOK (Traditional - stays exactly as before)
+    # ============================================================
     if event == "pull_request" and payload.get("action") in ["opened", "synchronize"]:
         pr_number = payload["number"]
         logger.info(f"🔍 Processing PR #{pr_number} in {repo_name}")
@@ -247,13 +384,7 @@ def webhook():
             diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
             api_key = user[4] if user else None
             use_mock = not api_key
-            
-            # ================================================================
-            # CRITICAL: Pass the user's chosen model to the analyzer!
-            # user[11] is the 'model' column (index 11)
-            # ================================================================
             user_model = user[11] if user and len(user) > 11 else None
-            
             result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model)
             
             status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
@@ -544,7 +675,7 @@ def dashboard():
         provider = request.form.get('provider')
         api_key = request.form.get('api_key')
         repo_name = request.form.get('repo_name')
-        model = request.form.get('model')  # <-- NEW
+        model = request.form.get('model')
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute('''
@@ -557,21 +688,15 @@ def dashboard():
         return redirect(url_for('dashboard'))
     
     html = load_html('dashboard.html')
-    
-    # Inject dynamic values (user tuple indexes)
-    # user[3]=provider, user[4]=api_key, user[5]=repo_name, user[11]=model
     html = html.replace('value="deepseek"', f'value="{user[3]}" selected' if user[3] == 'deepseek' else 'value="deepseek"')
     html = html.replace('placeholder="owner/repo"', f'value="{user[5] or ""}"')
     html = html.replace('placeholder="sk-..."', f'value="{user[4] or ""}"')
     html = html.replace('placeholder="e.g. gpt-4o, claude-3-5-sonnet..."', f'value="{user[11] or ""}"')
-    
-    # Status updates
     sub_status = user[9] or 'inactive'
     if sub_status == 'active':
         html = html.replace('Billing Status: Inactive', 'Billing Status: ✅ Active')
     else:
         html = html.replace('Billing Status: Inactive', 'Billing Status: ❌ Inactive')
-    
     github_status = '✅ Connected' if user[6] else '❌ Not Connected'
     html = html.replace('GitHub Status: Not Connected', f'GitHub Status: {github_status}')
     return html
