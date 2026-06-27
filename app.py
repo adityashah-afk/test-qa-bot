@@ -2,6 +2,7 @@
 """
 Aegis - Complete Market Ready Backend
 Professional Dark Theme, Error Messages, Social Login UI
+Full Multi-Model Support (OpenAI, Anthropic, DeepSeek, Grok, Azure, Custom)
 """
 
 import os
@@ -57,7 +58,7 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
 # ============================================================
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
-YOUR_DOMAIN = "https://test-qa-bot-production.up.railway.app"
+YOUR_DOMAIN = "https://test-qa-bot-production.up.railway.app"  # Hardcoded to fix OAuth redirect_uri issue
 
 # ============================================================
 # 4. GITHUB OAUTH CONFIG
@@ -68,7 +69,7 @@ GITHUB_OAUTH_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
 
 # ============================================================
-# 5. DATABASE SETUP (SQLite)
+# 5. DATABASE SETUP (SQLite) with Model Support
 # ============================================================
 DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
 
@@ -87,7 +88,8 @@ def init_db():
             stripe_customer_id TEXT,
             subscription_id TEXT,
             subscription_status TEXT DEFAULT 'inactive',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            model TEXT DEFAULT ''  -- <-- NEW: User selects any model name
         )
     ''')
     c.execute('''
@@ -105,7 +107,21 @@ def init_db():
     conn.close()
     logger.info("✅ Database initialized.")
 
+def migrate_db():
+    """Add 'model' column to users table if it doesn't exist (for existing deployments)."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN model TEXT DEFAULT ''")
+        conn.commit()
+        logger.info("✅ Added 'model' column to users table (migration).")
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+    conn.close()
+
 init_db()
+migrate_db()  # Run migration on startup
 
 # ============================================================
 # 6. DATABASE HELPERS
@@ -126,7 +142,7 @@ def get_user_by_id(user_id):
     conn.close()
     return user
 
-def update_user_settings(user_id, provider=None, api_key=None, repo_name=None, github_token=None):
+def update_user_settings(user_id, provider=None, api_key=None, repo_name=None, github_token=None, model=None):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
@@ -134,9 +150,10 @@ def update_user_settings(user_id, provider=None, api_key=None, repo_name=None, g
         SET provider = COALESCE(?, provider),
             api_key = COALESCE(?, api_key),
             repo_name = COALESCE(?, repo_name),
-            github_token = COALESCE(?, github_token)
+            github_token = COALESCE(?, github_token),
+            model = COALESCE(?, model)
         WHERE id = ?
-    ''', (provider, api_key, repo_name, github_token, user_id))
+    ''', (provider, api_key, repo_name, github_token, model, user_id))
     conn.commit()
     conn.close()
 
@@ -217,7 +234,7 @@ def webhook():
                 return jsonify({"error": str(e)}), 500
         return jsonify({"msg": "Ignored comment"}), 200
 
-    # --- Pull Request ---
+    # --- Pull Request (Passes the model to the engine) ---
     if event == "pull_request" and payload.get("action") in ["opened", "synchronize"]:
         pr_number = payload["number"]
         logger.info(f"🔍 Processing PR #{pr_number} in {repo_name}")
@@ -226,10 +243,19 @@ def webhook():
                 os.environ['LLM_PROVIDER'] = user[3]
                 os.environ['OPENAI_API_KEY'] = user[4] or ""
                 os.environ['GITHUB_TOKEN'] = user[6] or os.getenv("GITHUB_TOKEN")
+            
             diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
             api_key = user[4] if user else None
             use_mock = not api_key
-            result = analyze_pr_diff(diff_content, use_mock=use_mock)
+            
+            # ================================================================
+            # CRITICAL: Pass the user's chosen model to the analyzer!
+            # user[11] is the 'model' column (index 11)
+            # ================================================================
+            user_model = user[11] if user and len(user) > 11 else None
+            
+            result = analyze_pr_diff(diff_content, use_mock=use_mock, model_override=user_model)
+            
             status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
             comment = f"""🤖 **AI QA Report for PR #{pr_number}**
 
@@ -289,7 +315,6 @@ def signup():
         except sqlite3.IntegrityError:
             flash('Username already exists.')
             return redirect(url_for('signup'))
-    # Professional signup page with social login UI
     return '''
         <!DOCTYPE html>
         <html>
@@ -343,7 +368,6 @@ def login():
             return redirect(url_for('dashboard'))
         else:
             error = 'Invalid username or password. Please try again.'
-    # Professional login page with error message and "No account?" link
     error_html = f'<p class="text-red-400 text-sm mb-4">{error}</p>' if error else ''
     return f'''
         <!DOCTYPE html>
@@ -520,27 +544,34 @@ def dashboard():
         provider = request.form.get('provider')
         api_key = request.form.get('api_key')
         repo_name = request.form.get('repo_name')
+        model = request.form.get('model')  # <-- NEW
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute('''
-            UPDATE users SET provider = ?, api_key = ?, repo_name = ?
+            UPDATE users SET provider = ?, api_key = ?, repo_name = ?, model = ?
             WHERE id = ?
-        ''', (provider, api_key, repo_name, user_id))
+        ''', (provider, api_key, repo_name, model, user_id))
         conn.commit()
         conn.close()
         flash('Settings saved!')
         return redirect(url_for('dashboard'))
     
     html = load_html('dashboard.html')
-    # Inject dynamic values
+    
+    # Inject dynamic values (user tuple indexes)
+    # user[3]=provider, user[4]=api_key, user[5]=repo_name, user[11]=model
     html = html.replace('value="deepseek"', f'value="{user[3]}" selected' if user[3] == 'deepseek' else 'value="deepseek"')
     html = html.replace('placeholder="owner/repo"', f'value="{user[5] or ""}"')
     html = html.replace('placeholder="sk-..."', f'value="{user[4] or ""}"')
+    html = html.replace('placeholder="e.g. gpt-4o, claude-3-5-sonnet..."', f'value="{user[11] or ""}"')
+    
+    # Status updates
     sub_status = user[9] or 'inactive'
     if sub_status == 'active':
         html = html.replace('Billing Status: Inactive', 'Billing Status: ✅ Active')
     else:
         html = html.replace('Billing Status: Inactive', 'Billing Status: ❌ Inactive')
+    
     github_status = '✅ Connected' if user[6] else '❌ Not Connected'
     html = html.replace('GitHub Status: Not Connected', f'GitHub Status: {github_status}')
     return html

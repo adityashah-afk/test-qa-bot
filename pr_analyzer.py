@@ -36,8 +36,8 @@ def extract_changed_functions(diff_text: str) -> str:
     
     return '\n\n'.join(functions)
 
-def analyze_pr_diff(diff_text: str, use_mock: bool = True) -> dict:
-    """Run the AI engine on the extracted functions."""
+def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str = None) -> dict:
+    """Run the AI engine on the extracted functions, with optional model override."""
     code_snippet = extract_changed_functions(diff_text)
     
     if not code_snippet or len(code_snippet) < 10:
@@ -50,7 +50,7 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True) -> dict:
         }
     
     logger.info(f"🧠 Analyzing code snippet ({len(code_snippet)} characters)...")
-    engine = QAEngine(use_mock=use_mock)
+    engine = QAEngine(use_mock=use_mock, model_override=model_override)  # <-- Pass model here
     engine.load_code_from_string(code_snippet)
     
     passed, final_code, diff_string = engine.run_full_loop()
