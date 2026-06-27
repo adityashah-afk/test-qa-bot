@@ -3,6 +3,7 @@
 AI QA ENGINE - Universal Provider Support
 Supports: OpenAI, Anthropic, DeepSeek, Grok, Azure, and ANY OpenAI-compatible endpoint.
 BYOK (Bring Your Own Key) - We never see your data.
+FIX: OOM Protection using resource.setrlimit
 """
 
 import os
@@ -11,9 +12,10 @@ import subprocess
 import difflib
 import tempfile
 import re
+import resource  # <-- NEW: For memory limits
 from pathlib import Path
 from typing import Tuple
-from security_guard import hybrid_security_scan  # Import the new security guard
+from security_guard import hybrid_security_scan
 
 # ================================================================
 # 1. Environment Variables
@@ -200,10 +202,22 @@ def test_discount_edge_cases():
             tst_path.write_text(test_code)
 
             try:
+                # ============================================================
+                # FIX 1: OOM Protection (Memory Limit)
+                # ============================================================
+                # Set a memory limit of 256MB for the subprocess.
+                # This prevents `9**9**9**9` from crashing the host.
+                def set_memory_limit():
+                    try:
+                        resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, -1))  # 256 MB hard limit
+                    except (resource.error, AttributeError):
+                        pass  # Fallback for systems that don't support resource (Windows)
+                
                 result = subprocess.run(
                     [sys.executable, "-m", "pytest", str(tst_path), "--tb=short", "-v"],
                     capture_output=True, text=True, cwd=tmpdir,
-                    timeout=10
+                    timeout=10,
+                    preexec_fn=set_memory_limit  # Apply memory limit before executing pytest
                 )
                 if result.returncode == 0:
                     return True, result.stdout
@@ -211,6 +225,8 @@ def test_discount_edge_cases():
                     return False, result.stdout + "\n" + result.stderr
             except subprocess.TimeoutExpired:
                 return False, "❌ Test timed out (10s). Potential infinite loop."
+            except MemoryError:
+                return False, "❌ Memory limit exceeded. Blocked potential OOM attack."
 
     def fix_code(self, error_log: str, current_code: str) -> str:
         if self.use_mock:
