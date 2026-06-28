@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Aegis - Enterprise Ready Backend
-Includes: OAuth (Google/GitHub), Email Verification, Sentry Monitoring, Stripe Products, Redis Caching
+Includes: OAuth (Google/GitHub), Email Verification, Stripe Products, Redis Caching
 """
 
 import os
@@ -22,31 +22,30 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ============================================================
-# SENTRY MONITORING (Error tracking)
+# LOGGING SETUP (MUST BE BEFORE ANY LOGGER USAGE)
 # ============================================================
-import sentry_sdk
-from sentry_sdk.integrations.flask import FlaskIntegration
-
-sentry_sdk.init(
-    dsn=os.getenv("SENTRY_DSN"),
-    integrations=[FlaskIntegration()],
-    traces_sample_rate=1.0,
-    send_default_pii=False
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # ============================================================
-# REDIS CACHING (Save token costs)
+# REDIS CACHING (Optional - safe fallback)
 # ============================================================
 import redis
 try:
-    redis_client = redis.from_url(os.getenv("REDIS_URL", ""))
-    redis_client.ping()
-    CACHE_ENABLED = True
-    logger.info("✅ Redis connected. Caching enabled.")
-except:
+    redis_url = os.getenv("REDIS_URL")
+    if redis_url:
+        redis_client = redis.from_url(redis_url)
+        redis_client.ping()
+        CACHE_ENABLED = True
+        logger.info("✅ Redis connected. Caching enabled.")
+    else:
+        redis_client = None
+        CACHE_ENABLED = False
+        logger.info("ℹ️ REDIS_URL not set. Caching disabled.")
+except Exception as e:
     redis_client = None
     CACHE_ENABLED = False
-    logger.warning("⚠️ Redis not connected. Caching disabled.")
+    logger.warning(f"⚠️ Redis connection failed: {e}. Caching disabled.")
 
 # ============================================================
 # OAuth Imports
@@ -67,12 +66,6 @@ from github_client import get_pr_diff, post_comment
 from pr_analyzer import analyze_pr_diff, extract_changed_functions
 from code_scanner import ask_question_about_code
 from js_analyzer import extract_js_functions, run_jest_test
-
-# ============================================================
-# Logging
-# ============================================================
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 # ============================================================
 # Flask App
@@ -682,7 +675,7 @@ jobs:
           python-version: '3.13'
       - name: Install Aegis
         run: |
-          pip install flask PyGithub openai pytest python-dotenv stripe requests sentry-sdk redis flask-oauthlib sendgrid
+          pip install flask PyGithub openai pytest python-dotenv stripe requests redis flask-oauthlib sendgrid
       - name: Run Aegis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -1195,7 +1188,7 @@ def webhook():
 **Status:** {status}
 
 **Functions Detected:**
-{extract_changed_functions(diff_content)[:500]}...
+{extract_changed_functions(diff_content).get('code', '')[:500]}...
 
 **AI Suggested Fix (Diff):**
 {result['diff_output'][:1500]}
@@ -1234,7 +1227,7 @@ def webhook():
 **Status:** {status}
 
 **Functions Detected:**
-{extract_changed_functions(diff_content)[:500]}...
+{extract_changed_functions(diff_content).get('code', '')[:500]}...
 
 **AI Suggested Fix (Diff):**
 {result['diff_output'][:1500]}
