@@ -136,38 +136,6 @@ def is_migration_file(file_path):
             return True
     return False
 
-def is_large_refactor(pr, threshold=3):
-    if not pr:
-        return False
-    core_folders = ['models/', 'types/', 'core/', 'lib/', 'src/']
-    file_count = 0
-    for file in pr.get_files():
-        file_count += 1
-        for folder in core_folders:
-            if folder in file.filename:
-                return True
-    return file_count > threshold
-
-def get_repo_tree(repo, branch_name):
-    tree = []
-    try:
-        contents = repo.get_contents("", ref=branch_name)
-        def traverse(items, prefix=""):
-            for item in items:
-                if item.type == 'dir':
-                    tree.append(f"{prefix}{item.name}/")
-                    try:
-                        sub = repo.get_contents(item.path, ref=branch_name)
-                        traverse(sub, f"{prefix}{item.name}/")
-                    except:
-                        pass
-                else:
-                    tree.append(f"{prefix}{item.name}")
-        traverse(contents)
-    except:
-        pass
-    return "\n".join(tree)
-
 def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str = None, repo=None, pr=None, team_rules: str = None) -> dict:
     extracted = extract_changed_functions(diff_text)
     code_snippet = extracted['code']
@@ -192,8 +160,6 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
     import_map = {}
     local_sigs = ""
     impact_radius = []
-    repo_tree = None
-    is_large = False
 
     if repo and pr:
         for file in pr.get_files():
@@ -213,18 +179,12 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
     if repo and pr and func_name:
         impact_radius = scan_impact_radius(repo, func_name, pr.head.ref)
 
-    if repo and pr:
-        is_large = is_large_refactor(pr)
-        if is_large:
-            logger.info("🔍 Large refactor detected. Fetching full repo tree...")
-            repo_tree = get_repo_tree(repo, pr.head.ref)
-
     logger.info(f"🧠 Analyzing optimized snippet ({len(code_snippet)} chars)...")
     engine = QAEngine(use_mock=use_mock, model_override=model_override)
     engine.load_code_from_string(code_snippet)
 
     # ============================================================
-    # DEFINE THE ENHANCED GENERATE FUNCTION (WITH PROPER INDENTATION)
+    # DEFINE THE ENHANCED GENERATE FUNCTION
     # ============================================================
     def enhanced_generate(code_snippet):
         if use_mock:
@@ -255,11 +215,6 @@ This function is used in {len(impact_radius)} other file(s) in this repository.
 {json.dumps(impact_radius[:3], indent=2)}
 """
 
-        # Simplified tree_section to avoid f-string issues
-        tree_section = ""
-        if is_large and repo_tree:
-            tree_section = "**⚠️ LARGE REFACTOR DETECTED:**\nThis PR changes more than 3 files or modifies core folders. The full repo tree is provided for context."
-
         prompt = f"""
         Write pytest tests for this function:**Context (Surrounding code):**
 {extracted['context']}
@@ -272,8 +227,6 @@ This function is used in {len(impact_radius)} other file(s) in this repository.
 
 {impact_warning}
 
-{tree_section}
-
 {mock_instructions}
 
 **Mocking Instructions (Detailed):**
@@ -285,7 +238,7 @@ This function is used in {len(impact_radius)} other file(s) in this repository.
 # THIS RETURN IS INSIDE THE FUNCTION (properly indented)
 return engine.llm.generate(prompt)
 
-# Now assign the enhanced function to the engine
+# Assign the enhanced function to the engine
 engine.generate_test = enhanced_generate
 
 passed, final_code, diff_string = engine.run_full_loop()
