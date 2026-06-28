@@ -8,4 +8,4 @@ requests==2.31.0
 redis==5.0.1
 flask-oauthlib==0.9.6
 sendgrid==6.10.0
-werkzeug==2.3.8s
+werkzeug==2.3.8
