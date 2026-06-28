@@ -252,9 +252,6 @@ This function is used in {len(impact_radius)} other file(s) in this repository.
 {json.dumps(impact_radius[:3], indent=2)}
 """
 
-        # ============================================================
-        # FIXED: Use triple-single-quotes for tree_section to avoid backtick confusion
-        # ============================================================
         tree_section = ""
         if is_large and repo_tree:
             tree_section = f'''
