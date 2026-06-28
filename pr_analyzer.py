@@ -223,6 +223,9 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
     engine = QAEngine(use_mock=use_mock, model_override=model_override)
     engine.load_code_from_string(code_snippet)
 
+    # ============================================================
+    # DEFINE THE ENHANCED GENERATE FUNCTION (WITH PROPER INDENTATION)
+    # ============================================================
     def enhanced_generate(code_snippet):
         if use_mock:
             return """
@@ -252,13 +255,10 @@ This function is used in {len(impact_radius)} other file(s) in this repository.
 {json.dumps(impact_radius[:3], indent=2)}
 """
 
+        # Simplified tree_section to avoid f-string issues
         tree_section = ""
         if is_large and repo_tree:
-            tree_section = f'''
-**⚠️ LARGE REFACTOR DETECTED:**
-This PR changes more than 3 files or modifies core folders.
-Here is the entire file tree of the repository to help you understand the systemic impact:When writing tests, consider how changes in core files might affect other modules.
-'''
+            tree_section = "**⚠️ LARGE REFACTOR DETECTED:**\nThis PR changes more than 3 files or modifies core folders. The full repo tree is provided for context."
 
         prompt = f"""
         Write pytest tests for this function:**Context (Surrounding code):**
@@ -282,8 +282,10 @@ Here is the entire file tree of the repository to help you understand the system
 - Ensure tests are deterministic and do NOT hit external APIs.
 - Focus on edge cases: negative values, zeroes, nulls, and boundary conditions.
 """
+# THIS RETURN IS INSIDE THE FUNCTION (properly indented)
 return engine.llm.generate(prompt)
 
+# Now assign the enhanced function to the engine
 engine.generate_test = enhanced_generate
 
 passed, final_code, diff_string = engine.run_full_loop()
