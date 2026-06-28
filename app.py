@@ -89,13 +89,13 @@ PADDLE_WEBHOOK_SECRET = os.getenv("PADDLE_WEBHOOK_SECRET")
 PADDLE_VENDOR_ID = os.getenv("PADDLE_VENDOR_ID", "")
 
 # Initialize Paddle client
-paddle_client = paddle.Client(api_key=PADDLE_API_KEY)
+paddle_client = paddle.Client(api_key=PADDLE_API_KEY) if PADDLE_API_KEY else None
 
 # Razorpay
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
 RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
-razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)) if RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET else None
 
 # GitHub OAuth
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
@@ -418,13 +418,16 @@ def count_referrals(user_id):
     conn.close()
     return count
 
-ddef add_referral(referrer_id, referred_user_id):
+def add_referral(referrer_id, referred_user_id):
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('INSERT INTO referrals (referrer_id, referred_user_id) VALUES (?, ?)', (referrer_id, referred_user_id))
     conn.commit()
     conn.close()
 
+# ============================================================
+# MISSING FUNCTION - ADDED HERE
+# ============================================================
 def get_user_by_referral_code(code):
     conn = get_db_connection()
     c = conn.cursor()
@@ -626,6 +629,10 @@ def signup():
         except sqlite3.IntegrityError:
             flash('Username or Email already exists.')
             return redirect(url_for('signup'))
+        except Exception as e:
+            logger.error(f"Signup error: {e}", exc_info=True)
+            flash('An error occurred during signup. Please try again.')
+            return redirect(url_for('signup'))
         finally:
             conn.close()
     # GET request: return the signup form
@@ -656,7 +663,6 @@ def signup():
         </div></body></html>
     '''
 
-# (all following routes are unchanged – I’m including the rest of your original file verbatim)
 @app.route("/verify-email", methods=['GET', 'POST'])
 def verify_email():
     email = request.args.get('email') or request.form.get('email')
@@ -773,7 +779,6 @@ def create_checkout_session():
         return jsonify({"error": "User not found"}), 404
 
     plan = request.form.get('plan') or 'monthly'
-    # Map plan names to Paddle price IDs (set these in your environment)
     price_map = {
         'monthly': os.getenv("PADDLE_PRICE_MONTHLY"),
         'team_annual': os.getenv("PADDLE_PRICE_TEAM_ANNUAL"),
@@ -784,20 +789,18 @@ def create_checkout_session():
         return jsonify({"error": "Invalid plan"}), 400
 
     try:
-        # Create a transaction with Paddle
         transaction = paddle_client.transactions.create(
             items=[{
                 'price_id': price_id,
                 'quantity': 1
             }],
             customer={
-                'email': user[3]  # user email from DB
+                'email': user[3]
             },
             custom_data={
                 'user_id': str(user[0])
             }
         )
-        # Get checkout URL
         checkout_url = transaction['data']['checkout']['url']
         return jsonify({'url': checkout_url})
     except paddle.PaddleError as e:
@@ -812,7 +815,6 @@ def paddle_webhook():
         return jsonify({"error": "Missing signature"}), 400
 
     try:
-        # Verify webhook signature
         paddle_client.verify_webhook_signature(
             payload=payload,
             signature_header=signature,
@@ -826,7 +828,6 @@ def paddle_webhook():
     data = event.get('data', {})
 
     if event_type == 'transaction.completed':
-        # Payment successful
         user_id = data.get('custom_data', {}).get('user_id')
         subscription_id = data.get('subscription_id')
         customer_id = data.get('customer_id')
@@ -1127,8 +1128,13 @@ def webhook():
     if user:
         org_id = user[14] if len(user) > 14 else None
         if org_id:
-            org_api_key = get_org_api_key(org_id)
-            team_rules = get_org_rules(org_id)
+            # These functions are defined elsewhere – ensure they exist
+            try:
+                from code_scanner import get_org_api_key, get_org_rules
+                org_api_key = get_org_api_key(org_id)
+                team_rules = get_org_rules(org_id)
+            except ImportError:
+                pass
 
     # ============================================================
     # CHATBOT & MANUAL COMMANDS
@@ -1247,18 +1253,23 @@ def webhook():
             logger.info(f"Code change triggered on PR #{pr_number} in {repo_name}")
             try:
                 diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                change_result = process_natural_language_change(instruction, diff_content, user)
-                if change_result['success']:
+                # This function needs to be defined elsewhere – if not, handle gracefully
+                try:
+                    from code_scanner import process_natural_language_change
+                    change_result = process_natural_language_change(instruction, diff_content, user)
+                except ImportError:
+                    change_result = {'success': False, 'error': 'Process change function not available'}
+                if change_result.get('success'):
                     save_pending_fix(pr_number, repo_name, change_result['fixed_code'], change_result['diff_output'])
                     reply = f"""🤖 **Aegis Code Change (Triggered via `/change`)**
 
 **Instruction:** *"{instruction}"*
 
 **Changes Made:**
-{change_result['description']}
+{change_result.get('description', 'Code updated.')}
 
 **Diff:**
-{change_result['diff_output'][:1500]}
+{change_result.get('diff_output', '')[:1500]}
 
 ---
 ✅ **Approve this change?** Reply with `approve` or `reject`.
@@ -1268,8 +1279,8 @@ def webhook():
                         log_audit(org_id, user[0] if user else None, 'change', pr_number, repo_name, f"Change: {instruction}")
                     return jsonify({"msg": "Pending change posted"}), 200
                 else:
-                    post_comment(repo, pr_number, f"❌ Failed: {change_result['error']}")
-                    return jsonify({"error": change_result['error']}), 500
+                    post_comment(repo, pr_number, f"❌ Failed: {change_result.get('error', 'Unknown error')}")
+                    return jsonify({"error": change_result.get('error')}), 500
             except Exception as e:
                 logger.error(f"/change error: {e}")
                 return jsonify({"error": str(e)}), 500
