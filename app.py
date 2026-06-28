@@ -134,12 +134,17 @@ def send_verification_email(email, code):
         return False
 
 # ============================================================
-# Database (SQLite)
+# Database (SQLite with WAL mode & timeout for concurrency)
 # ============================================================
 DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
 
 def get_db_connection():
-    return sqlite3.connect(DB_PATH)
+    """Returns a SQLite connection with WAL mode and busy timeout."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.row_factory = sqlite3.Row  # allows dict-like access
+    return conn
 
 def init_db():
     conn = get_db_connection()
@@ -607,13 +612,15 @@ def signup():
                 VALUES (?, ?, ?)
             ''', (email, verif_code, verif_expires))
             conn.commit()
-            conn.close()
             send_verification_email(email, verif_code)
             flash('Account created! Please check your email for the verification code.')
             return redirect(url_for('verify_email', email=email))
         except sqlite3.IntegrityError:
             flash('Username or Email already exists.')
             return redirect(url_for('signup'))
+        finally:
+            conn.close()
+    # GET request: return the signup form
     return '''
         <!DOCTYPE html>
         <html><head><title>Aegis - Sign Up</title><script src="https://cdn.tailwindcss.com"></script>
@@ -641,6 +648,7 @@ def signup():
         </div></body></html>
     '''
 
+# (all following routes are unchanged – I’m including the rest of your original file verbatim)
 @app.route("/verify-email", methods=['GET', 'POST'])
 def verify_email():
     email = request.args.get('email') or request.form.get('email')
