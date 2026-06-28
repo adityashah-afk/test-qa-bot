@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Aegis - Enterprise Ready Backend
-Includes: Email Verification, Stripe Products, Redis Caching (No OAuth)
+Supports: Stripe (International) + Razorpay (India/UPI)
 """
 
 import os
@@ -18,6 +18,7 @@ from flask import Flask, request, jsonify, redirect, url_for, session, flash, re
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
 import stripe
+import razorpay
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -28,7 +29,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ============================================================
-# REDIS CACHING (Optional - safe fallback)
+# REDIS CACHING (Optional)
 # ============================================================
 import redis
 try:
@@ -54,9 +55,8 @@ import sendgrid
 from sendgrid.helpers.mail import Mail
 
 # ============================================================
-# Continue with rest of your code...
+# GitHub Client and Analyzers
 # ============================================================
-
 from github_client import get_pr_diff, post_comment
 from pr_analyzer import analyze_pr_diff, extract_changed_functions
 from code_scanner import ask_question_about_code
@@ -83,14 +83,23 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
 # ============================================================
 # Config
 # ============================================================
+# Stripe
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
-YOUR_DOMAIN = "https://test-qa-bot-production.up.railway.app"
 
+# Razorpay
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
+RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
+razorpay_client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+
+# GitHub OAuth
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
 GITHUB_OAUTH_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
+
+YOUR_DOMAIN = os.getenv("YOUR_DOMAIN", "https://test-qa-bot-production.up.railway.app")
 
 # ============================================================
 # Email Setup (SendGrid)
@@ -99,7 +108,6 @@ SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "hello@aegis.com")
 
 def send_verification_email(email, code):
-    """Send a 6-digit verification code via SendGrid."""
     if not SENDGRID_API_KEY:
         logger.warning("SendGrid API key not set. Skipping email.")
         return False
@@ -122,30 +130,15 @@ def send_verification_email(email, code):
         return False
 
 # ============================================================
-# Database
+# Database (SQLite)
 # ============================================================
-import sqlite3
-import psycopg2
+DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
 
-# Database configuration
-DATABASE_URL = os.getenv("DATABASE_URL")  # Railway PostgreSQL URL
-if DATABASE_URL:
-    # PostgreSQL mode
-    import psycopg2
-    def get_db_connection():
-        return psycopg2.connect(DATABASE_URL)
-    DB_TYPE = "postgres"
-    logger.info("✅ Using PostgreSQL database")
-else:
-    # SQLite mode (fallback)
-    DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
-    def get_db_connection():
-        return sqlite3.connect(DB_PATH)
-    DB_TYPE = "sqlite"
-    logger.info("ℹ️ Using SQLite database (fallback)")
+def get_db_connection():
+    return sqlite3.connect(DB_PATH)
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
@@ -267,7 +260,7 @@ def init_db():
     logger.info("Database initialized with all tables.")
 
 def migrate_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     columns = ['model', 'trial_expires_at', 'referral_code', 'referred_by', 'org_id', 'role', 'full_name', 'email', 'company']
     for col in columns:
@@ -299,7 +292,7 @@ def set_cached_fix(code_hash: str, fix_data: dict):
     if not CACHE_ENABLED:
         return
     try:
-        redis_client.setex(f"fix:{code_hash}", 86400, json.dumps(fix_data))  # 24 hour cache
+        redis_client.setex(f"fix:{code_hash}", 86400, json.dumps(fix_data))
     except:
         pass
 
@@ -322,7 +315,7 @@ def is_trial_active(user):
     return False
 
 def get_user(username):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('SELECT * FROM users WHERE username = ?', (username,))
     user = c.fetchone()
@@ -330,7 +323,7 @@ def get_user(username):
     return user
 
 def get_user_by_id(user_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('SELECT * FROM users WHERE id = ?', (user_id,))
     user = c.fetchone()
@@ -338,7 +331,7 @@ def get_user_by_id(user_id):
     return user
 
 def get_user_by_email(email):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('SELECT * FROM users WHERE email = ?', (email,))
     user = c.fetchone()
@@ -346,7 +339,7 @@ def get_user_by_email(email):
     return user
 
 def update_user_settings(user_id, provider=None, api_key=None, repo_name=None, github_token=None, model=None):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('''
         UPDATE users SET provider = COALESCE(?, provider), api_key = COALESCE(?, api_key),
@@ -357,7 +350,7 @@ def update_user_settings(user_id, provider=None, api_key=None, repo_name=None, g
     conn.close()
 
 def update_subscription(user_id, customer_id, subscription_id, status):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('''
         UPDATE users SET stripe_customer_id = ?, subscription_id = ?, subscription_status = ? WHERE id = ?
@@ -366,7 +359,7 @@ def update_subscription(user_id, customer_id, subscription_id, status):
     conn.close()
 
 def get_user_by_github_repo(repo_name):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('SELECT * FROM users WHERE repo_name = ? ORDER BY id LIMIT 1', (repo_name,))
     user = c.fetchone()
@@ -374,7 +367,7 @@ def get_user_by_github_repo(repo_name):
     return user
 
 def save_pending_fix(pr_number, repo_name, fixed_code, diff_output):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('INSERT INTO pending_fixes (pr_number, repo_name, fixed_code, diff_output, status) VALUES (?, ?, ?, ?, ?)',
               (pr_number, repo_name, fixed_code, diff_output, 'pending'))
@@ -382,7 +375,7 @@ def save_pending_fix(pr_number, repo_name, fixed_code, diff_output):
     conn.close()
 
 def get_pending_fix(pr_number, repo_name):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('SELECT id, fixed_code, diff_output FROM pending_fixes WHERE pr_number = ? AND repo_name = ? AND status = "pending" ORDER BY created_at DESC LIMIT 1', (pr_number, repo_name))
     row = c.fetchone()
@@ -390,17 +383,36 @@ def get_pending_fix(pr_number, repo_name):
     return row
 
 def update_pending_fix_status(fix_id, status):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('UPDATE pending_fixes SET status = ? WHERE id = ?', (status, fix_id))
     conn.commit()
     conn.close()
 
 def log_audit(org_id, user_id, action, pr_number=None, repo_name=None, details=None):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('INSERT INTO audit_logs (org_id, user_id, action, pr_number, repo_name, details) VALUES (?, ?, ?, ?, ?, ?)',
               (org_id, user_id, action, pr_number, repo_name, details))
+    conn.commit()
+    conn.close()
+
+def generate_referral_code():
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(8))
+
+def count_referrals(user_id):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM referrals WHERE referrer_id = ?', (user_id,))
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+def add_referral(referrer_id, referred_user_id):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('INSERT INTO referrals (referrer_id, referred_user_id) VALUES (?, ?)', (referrer_id, referred_user_id))
     conn.commit()
     conn.close()
 
@@ -422,6 +434,7 @@ def analyze_pr_diff_routed(diff_text, use_mock, model_override, repo, pr, team_r
         from pr_analyzer import analyze_pr_diff
         return analyze_pr_diff(diff_text, use_mock, model_override, repo, pr, team_rules)
     elif lang == 'javascript':
+        # JavaScript support is routed but not fully executed in this MVP
         return {
             'success': True,
             'message': 'JavaScript support is live! (Jest)',
@@ -530,7 +543,7 @@ jobs:
           python-version: '3.13'
       - name: Install Aegis
         run: |
-          pip install flask PyGithub openai pytest python-dotenv stripe requests redis sendgrid
+          pip install flask PyGithub openai pytest python-dotenv stripe requests redis sendgrid razorpay
       - name: Run Aegis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -565,19 +578,15 @@ def signup():
         if not username or not password or not email:
             flash('Username, Email, and Password are required')
             return redirect(url_for('signup'))
-        
-        # Check if email exists
         if get_user_by_email(email):
             flash('Email already registered. Please log in.')
             return redirect(url_for('login'))
-        
         password_hash = generate_password_hash(password)
         trial_expiry = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
         my_code = generate_referral_code()
         verif_code = generate_verification_code()
         verif_expires = (datetime.utcnow() + timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
-        
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         c = conn.cursor()
         try:
             c.execute('''
@@ -590,17 +599,13 @@ def signup():
                 if referrer:
                     c.execute('UPDATE users SET referred_by = ? WHERE id = ?', (referrer[0], user_id))
                     add_referral(referrer[0], user_id)
-            # Save verification code
             c.execute('''
                 INSERT INTO email_verifications (email, code, expires_at)
                 VALUES (?, ?, ?)
             ''', (email, verif_code, verif_expires))
             conn.commit()
             conn.close()
-            
-            # Send verification email
             send_verification_email(email, verif_code)
-            
             flash('Account created! Please check your email for the verification code.')
             return redirect(url_for('verify_email', email=email))
         except sqlite3.IntegrityError:
@@ -638,7 +643,7 @@ def verify_email():
     email = request.args.get('email') or request.form.get('email')
     if request.method == 'POST':
         code = request.form.get('code')
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         c = conn.cursor()
         c.execute('''
             SELECT id FROM email_verifications 
@@ -684,7 +689,7 @@ def resend_verification():
         return redirect(url_for('signup'))
     code = generate_verification_code()
     verif_expires = (datetime.utcnow() + timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('''
         INSERT INTO email_verifications (email, code, expires_at)
@@ -704,7 +709,7 @@ def login():
         password = request.form.get('password')
         user = get_user(username)
         if user and check_password_hash(user[2], password):
-            if not user[3]:  # email_verified is at index 3 now
+            if not user[3]:
                 flash('Please verify your email first.')
                 return redirect(url_for('verify_email', email=user[3]))
             session['user_id'] = user[0]; session['username'] = user[1]; session.permanent = True
@@ -738,25 +743,30 @@ def logout():
     session.clear(); flash('Logged out.'); return redirect(url_for('home'))
 
 # ============================================================
-# STRIPE PRODUCTS (The Revenue Engine)
+# STRIPE PRODUCTS (International)
 # ============================================================
 @app.route("/create-checkout-session", methods=['POST'])
 def create_checkout_session():
-    if 'user_id' not in session: return jsonify({"error": "Unauthorized"}), 401
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
     user = get_user_by_id(session['user_id'])
-    if not user: return jsonify({"error": "User not found"}), 404
-    plan = request.args.get('plan') or 'monthly'
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    plan = request.form.get('plan') or 'monthly'
     price_map = {
         'monthly': os.getenv("STRIPE_PRICE_MONTHLY"),
         'team_annual': os.getenv("STRIPE_PRICE_TEAM_ANNUAL"),
         'individual_biennial': os.getenv("STRIPE_PRICE_INDIVIDUAL_BIENNIAL")
     }
     price_id = price_map.get(plan)
-    if not price_id: return jsonify({"error": "Invalid plan"}), 400
+    if not price_id:
+        return jsonify({"error": "Invalid plan"}), 400
     try:
         checkout_session = stripe.checkout.Session.create(
-            customer=user[7] or None, payment_method_types=['card'],
-            line_items=[{'price': price_id, 'quantity': 1}], mode='subscription',
+            customer=user[7] or None,
+            payment_method_types=['card'],
+            line_items=[{'price': price_id, 'quantity': 1}],
+            mode='subscription',
             success_url=f"{YOUR_DOMAIN}/dashboard?success=true",
             cancel_url=f"{YOUR_DOMAIN}/dashboard?canceled=true",
             metadata={'user_id': user[0]}
@@ -772,8 +782,10 @@ def stripe_webhook():
     sig_header = request.headers.get('Stripe-Signature')
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
-    except ValueError: return jsonify({"error": "Invalid payload"}), 400
-    except stripe.error.SignatureVerificationError: return jsonify({"error": "Invalid signature"}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid payload"}), 400
+    except stripe.error.SignatureVerificationError:
+        return jsonify({"error": "Invalid signature"}), 400
     data_object = event['data']['object']
     if event['type'] == 'checkout.session.completed':
         session_data = data_object
@@ -786,7 +798,7 @@ def stripe_webhook():
         subscription = data_object
         customer_id = subscription['customer']
         status = subscription['status']
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         c = conn.cursor()
         c.execute('UPDATE users SET subscription_status = ? WHERE stripe_customer_id = ?', (status, customer_id))
         conn.commit()
@@ -794,36 +806,22 @@ def stripe_webhook():
     elif event['type'] == 'customer.subscription.deleted':
         subscription = data_object
         customer_id = subscription['customer']
-        conn = sqlite3.connect(DB_PATH)
+        conn = get_db_connection()
         c = conn.cursor()
         c.execute('UPDATE users SET subscription_status = "canceled" WHERE stripe_customer_id = ?', (customer_id,))
         conn.commit()
         conn.close()
     return jsonify({"status": "success"}), 200
 
-    # ============================================================
-# STRIPE (KEEP THIS - FOR INTERNATIONAL)
 # ============================================================
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-# ... (your existing Stripe routes like /create-checkout-session stay exactly as they are) ...
-
+# RAZORPAY PRODUCTS (India / UPI)
 # ============================================================
-# RAZORPAY (ADD THIS - FOR INDIA / UPI)
-# ============================================================
-import razorpay
-
-RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
-RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
-RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
-
-# Amounts in paisa (INR)
 PRICE_MAP_RAZORPAY = {
-    'monthly': {'amount': 2400, 'desc': 'Developer ($29)'},       # ₹2,400
-    'team_monthly': {'amount': 4000, 'desc': 'Team ($49)'},        # ₹4,000
-    'team_annual': {'amount': 165000, 'desc': 'Founder\'s Pass'},  # ₹1,65,000
+    'monthly': {'amount': 2400, 'desc': 'Developer ($29)'},        # ₹2,400
+    'team_monthly': {'amount': 4000, 'desc': 'Team ($49)'},         # ₹4,000
+    'team_annual': {'amount': 165000, 'desc': 'Founder\'s Pass'},   # ₹1,65,000
+    'individual_biennial': {'amount': 24000, 'desc': 'Lock-In Pass'} # ₹24,000
 }
-
-client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 
 @app.route("/create-razorpay-order", methods=['POST'])
 def create_razorpay_order():
@@ -841,12 +839,12 @@ def create_razorpay_order():
     price_info = PRICE_MAP_RAZORPAY[plan]
     try:
         order_data = {
-            'amount': price_info['amount'] * 100,
+            'amount': price_info['amount'] * 100,  # paisa
             'currency': 'INR',
             'receipt': f'receipt_{user[0]}_{plan}',
             'notes': {'user_id': user[0], 'plan': plan}
         }
-        order = client.order.create(data=order_data)
+        order = razorpay_client.order.create(data=order_data)
         return jsonify({
             'order_id': order['id'],
             'amount': order['amount'],
@@ -854,13 +852,57 @@ def create_razorpay_order():
             'key_id': RAZORPAY_KEY_ID
         })
     except Exception as e:
-        logger.error(f"Razorpay error: {e}")
+        logger.error(f"Razorpay order error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/razorpay-webhook", methods=['POST'])
 def razorpay_webhook():
-    # ... (same webhook logic as Stripe, update subscription status) ...
-    # I will provide the full code in the final block below.
+    payload = request.get_data(as_text=True)
+    signature = request.headers.get('X-Razorpay-Signature')
+
+    try:
+        razorpay_client.utility.verify_webhook_signature(
+            payload,
+            signature,
+            RAZORPAY_WEBHOOK_SECRET
+        )
+    except razorpay.errors.SignatureVerificationError:
+        return jsonify({"error": "Invalid signature"}), 400
+
+    data = request.get_json()
+    event = data.get('event')
+
+    if event == 'payment.captured':
+        payment_data = data['payload']['payment']['entity']
+        notes = payment_data.get('notes', {})
+        user_id = int(notes.get('user_id'))
+        plan = notes.get('plan')
+
+        # Update user subscription status
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute('''
+            UPDATE users 
+            SET subscription_status = 'active',
+                stripe_customer_id = ? 
+            WHERE id = ?
+        ''', (payment_data['id'], user_id))
+        conn.commit()
+        conn.close()
+
+        logger.info(f"✅ Razorpay payment captured for user {user_id} (Plan: {plan})")
+
+        # Extend trial
+        if 'annual' in plan or 'biennial' in plan:
+            expiry = (datetime.utcnow() + timedelta(days=365)).strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            expiry = (datetime.utcnow() + timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute('UPDATE users SET trial_expires_at = ? WHERE id = ?', (expiry, user_id))
+        conn.commit()
+        conn.close()
+
     return jsonify({"status": "success"}), 200
 
 # ============================================================
@@ -868,13 +910,16 @@ def razorpay_webhook():
 # ============================================================
 @app.route("/team-settings", methods=['POST'])
 def team_settings():
-    if 'user_id' not in session: return redirect(url_for('login'))
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
     user = get_user_by_id(session['user_id'])
     org_id = user[14] if len(user) > 14 else None
-    if not org_id: flash("You are not part of an organization. Please upgrade to the Team plan."); return redirect(url_for('dashboard'))
+    if not org_id:
+        flash("You are not part of an organization. Please upgrade to the Team plan.")
+        return redirect(url_for('dashboard'))
     org_api_key = request.form.get('org_api_key')
     testing_rules = request.form.get('testing_rules')
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     if org_api_key:
         c.execute('INSERT INTO org_settings (org_id, setting_key, setting_value) VALUES (?, ?, ?) ON CONFLICT(org_id, setting_key) DO UPDATE SET setting_value = excluded.setting_value', (org_id, 'deepseek_api_key', org_api_key))
@@ -887,46 +932,32 @@ def team_settings():
 
 @app.route("/audit-logs")
 def audit_logs():
-    if 'user_id' not in session: return redirect(url_for('login'))
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
     user = get_user_by_id(session['user_id'])
     org_id = user[14] if len(user) > 14 else None
-    if not org_id: flash("No organization found."); return redirect(url_for('dashboard'))
-    conn = sqlite3.connect(DB_PATH)
+    if not org_id:
+        flash("No organization found.")
+        return redirect(url_for('dashboard'))
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('''SELECT u.username, a.action, a.pr_number, a.repo_name, a.details, a.timestamp 
                  FROM audit_logs a JOIN users u ON a.user_id = u.id WHERE a.org_id = ? ORDER BY a.timestamp DESC LIMIT 50''', (org_id,))
     logs = c.fetchall()
     conn.close()
     html = "<h1>Audit Logs</h1><table border='1'><tr><th>User</th><th>Action</th><th>PR</th><th>Repo</th><th>Details</th><th>Time</th></tr>"
-    for log in logs: html += f"<tr><td>{log[0]}</td><td>{log[1]}</td><td>{log[2]}</td><td>{log[3]}</td><td>{log[4]}</td><td>{log[5]}</td></tr>"
+    for log in logs:
+        html += f"<tr><td>{log[0]}</td><td>{log[1]}</td><td>{log[2]}</td><td>{log[3]}</td><td>{log[4]}</td><td>{log[5]}</td></tr>"
     html += "</table><a href='/dashboard'>Back</a>"
     return html
 
 # ============================================================
 # DASHBOARD (ROI + Scarcity)
 # ============================================================
-def generate_referral_code():
-    alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(8))
-
-def count_referrals(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('SELECT COUNT(*) FROM referrals WHERE referrer_id = ?', (user_id,))
-    count = c.fetchone()[0]
-    conn.close()
-    return count
-
-def add_referral(referrer_id, referred_user_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('INSERT INTO referrals (referrer_id, referred_user_id) VALUES (?, ?)', (referrer_id, referred_user_id))
-    conn.commit()
-    conn.close()
-
 @app.route("/dashboard", methods=['GET', 'POST'])
 def dashboard():
-    if 'user_id' not in session: return redirect(url_for('login'))
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
     user_id = session['user_id']
     user = get_user_by_id(user_id)
     org_id = user[14] if len(user) > 14 else None
@@ -940,7 +971,8 @@ def dashboard():
             if datetime.utcnow() < expiry:
                 is_expired = False
                 days_left = (expiry - datetime.utcnow()).days
-        except: pass
+        except:
+            pass
 
     if is_expired:
         return render_template_string('''
@@ -982,7 +1014,7 @@ def dashboard():
         ''')
 
     # ROI DASHBOARD
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     c = conn.cursor()
     c.execute('SELECT COUNT(DISTINCT pr_number), SUM(bugs_found), SUM(time_saved_minutes) FROM pr_analytics WHERE user_id = ? OR org_id = ?', (user_id, org_id if org_id else -1))
     stats = c.fetchone()
@@ -1010,8 +1042,10 @@ def dashboard():
     html = html.replace('placeholder="sk-..."', f'value="{user[4] or ""}"')
     html = html.replace('placeholder="e.g. gpt-4o..."', f'value="{user[11] or ""}"')
     sub_status = user[9] or 'inactive'
-    if sub_status == 'active': html = html.replace('Billing Status: Inactive', 'Billing Status: ✅ Active')
-    else: html = html.replace('Billing Status: Inactive', f'Billing Status: ⏳ Trial ({days_left} days left)')
+    if sub_status == 'active':
+        html = html.replace('Billing Status: Inactive', 'Billing Status: ✅ Active')
+    else:
+        html = html.replace('Billing Status: Inactive', f'Billing Status: ⏳ Trial ({days_left} days left)')
     github_status = '✅ Connected' if user[6] else '❌ Not Connected'
     html = html.replace('GitHub Status: Not Connected', f'GitHub Status: {github_status}')
     return html
@@ -1215,7 +1249,7 @@ def webhook():
         return jsonify({"msg": "Ignored comment"}), 200
 
     # ============================================================
-    # PULL REQUEST (AUTO-HEAL + ROI LOGGING + CACHING)
+    # PULL REQUEST (AUTO-HEAL + ROI LOGGING)
     # ============================================================
     if event == "pull_request" and payload.get("action") in ["opened", "synchronize"]:
         pr_number = payload["number"]
@@ -1253,7 +1287,7 @@ def webhook():
             bugs_found = 1 if result.get('diff_output') and len(result['diff_output']) > 50 else 0
             time_saved = bugs_found * 10
             try:
-                conn = sqlite3.connect(DB_PATH)
+                conn = get_db_connection()
                 c = conn.cursor()
                 c.execute('''
                     INSERT INTO pr_analytics (user_id, org_id, pr_number, repo_name, bugs_found, time_saved_minutes)
@@ -1274,6 +1308,9 @@ def webhook():
 
     return jsonify({"msg": "Ignored"}), 200
 
+# ============================================================
+# RUN APP
+# ============================================================
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)
