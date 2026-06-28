@@ -614,11 +614,11 @@ def signup():
             ''', (full_name, email, company, username, password_hash, trial_expiry, my_code))
             user_id = c.lastrowid
             # Referral logic (now safe because get_user_by_referral_code exists)
-            if referral_code:
-                referrer = get_user_by_referral_code(referral_code)
-                if referrer:
-                    c.execute('UPDATE users SET referred_by = ? WHERE id = ?', (referrer[0], user_id))
-                    add_referral(referrer[0], user_id)
+            i#f referral_code:
+                #referrer = get_user_by_referral_code(referral_code)
+                #if referrer:
+                    #c.execute('UPDATE users SET referred_by = ? WHERE id = ?', (referrer[0], user_id))
+                    #add_referral(referrer[0], user_id)
             c.execute('''
                 INSERT INTO email_verifications (email, code, expires_at)
                 VALUES (?, ?, ?)
