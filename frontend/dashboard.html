@@ -9,19 +9,84 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
         * { font-family: 'Inter', sans-serif; }
         body { background: #000000; }
-        .card-dark { background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 0.75rem; padding: 1.5rem; transition: all 0.2s ease; }
+        .card-dark {
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            transition: all 0.2s ease;
+        }
         .card-dark:hover { border-color: #2a2a2a; }
-        .input-dark { background: #0a0a0a; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; transition: all 0.2s ease; }
-        .input-dark:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
+        .input-dark {
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            color: #e5e7eb;
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            width: 100%;
+            transition: all 0.2s ease;
+        }
+        .input-dark:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
         .input-dark::placeholder { color: #4b5563; }
-        .btn-primary { background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem 1.5rem; border-radius: 0.5rem; transition: all 0.2s ease; }
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+            font-weight: 600;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            transition: all 0.2s ease;
+        }
         .btn-primary:hover { background: #2563eb; }
-        .btn-secondary { background: transparent; color: #9ca3af; border: 1px solid #1a1a1a; font-weight: 500; padding: 0.75rem 1.5rem; border-radius: 0.5rem; transition: all 0.2s ease; }
+        .btn-secondary {
+            background: transparent;
+            color: #9ca3af;
+            border: 1px solid #1a1a1a;
+            font-weight: 500;
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            transition: all 0.2s ease;
+        }
         .btn-secondary:hover { border-color: #3b82f6; color: white; }
+        .btn-stripe {
+            background: #635bff;
+            color: white;
+            font-weight: 600;
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            transition: all 0.2s ease;
+            width: 100%;
+        }
+        .btn-stripe:hover { background: #5548e0; }
+        .btn-razorpay {
+            background: #0c8b6a;
+            color: white;
+            font-weight: 600;
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            transition: all 0.2s ease;
+            width: 100%;
+        }
+        .btn-razorpay:hover { background: #0a7a5d; }
         .text-muted { color: #6b7280; }
         select option { background: #0a0a0a; }
-        .referral-input { background: #0a0a0a; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; flex: 1; min-width: 0; }
-        .referral-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
+        .referral-input {
+            background: #0a0a0a;
+            border: 1px solid #1a1a1a;
+            color: #e5e7eb;
+            padding: 0.75rem 1rem;
+            border-radius: 0.5rem;
+            flex: 1;
+            min-width: 0;
+        }
+        .referral-input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
         .referral-input::placeholder { color: #4b5563; }
         .flex-1 { flex: 1; }
         textarea.input-dark { resize: vertical; min-height: 80px; }
@@ -80,15 +145,63 @@
             <p class="text-sm text-[#4b5563] mt-4">⚡ <span class="text-white">Upgrade to Team</span> before the trial ends to keep saving!</p>
         </div>
 
-        <!-- Billing & GitHub Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-            <div class="card-dark">
-                <p class="text-[#6b7280] text-sm">Billing</p>
-                <p class="text-xl font-bold mt-1 text-white">Billing Status: Inactive</p>
-                <form action="/create-checkout-session" method="POST" class="mt-4">
-                    <button type="submit" class="btn-primary text-sm">Subscribe ($29/mo)</button>
-                </form>
+        <!-- ============================================================
+        BILLING CARD (DUAL PAYMENT: STRIPE + RAZORPAY)
+        ============================================================ -->
+        <div class="card-dark mb-8 border border-[#1a1a1a]">
+            <p class="text-[#6b7280] text-sm">Billing</p>
+            <p class="text-xl font-bold mt-1 text-white">Billing Status: Inactive</p>
+
+            <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- LEFT: STRIPE (International) -->
+                <div class="bg-gray-800/30 p-4 rounded-xl border border-gray-700">
+                    <p class="text-sm font-semibold text-white">🌍 International</p>
+                    <p class="text-xs text-gray-400 mb-3">Credit / Debit Cards (USD)</p>
+                    <form action="/create-checkout-session" method="POST">
+                        <input type="hidden" name="plan" value="monthly">
+                        <button type="submit" class="btn-stripe">💳 Pay $29/mo</button>
+                    </form>
+                    <p class="text-xs text-gray-500 mt-2">USA • UK • Europe • Australia</p>
+                </div>
+
+                <!-- RIGHT: RAZORPAY (India) -->
+                <div class="bg-gray-800/30 p-4 rounded-xl border border-gray-700">
+                    <p class="text-sm font-semibold text-white">🇮🇳 India</p>
+                    <p class="text-xs text-gray-400 mb-3">UPI / NetBanking / Cards (INR)</p>
+                    <button onclick="initiateRazorpayPayment('monthly')" class="btn-razorpay">💳 Pay ₹2,400</button>
+                    <p class="text-xs text-gray-500 mt-2">UPI • NetBanking • RuPay / Visa / Mastercard</p>
+                </div>
             </div>
+
+            <!-- Team Plan Options (Both Gateways) -->
+            <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="bg-gray-800/30 p-3 rounded-xl border border-gray-700">
+                    <p class="text-sm font-semibold text-white">👑 Founder's Pass (Team)</p>
+                    <p class="text-xs text-gray-400">1 Year • Up to 15 users</p>
+                    <div class="flex gap-2 mt-2">
+                        <form action="/create-checkout-session" method="POST">
+                            <input type="hidden" name="plan" value="team_annual">
+                            <button type="submit" class="btn-stripe text-xs px-3 py-2">$1,999 (Stripe)</button>
+                        </form>
+                        <button onclick="initiateRazorpayPayment('team_annual')" class="btn-razorpay text-xs px-3 py-2">₹1,65,000 (Razorpay)</button>
+                    </div>
+                </div>
+                <div class="bg-gray-800/30 p-3 rounded-xl border border-gray-700">
+                    <p class="text-sm font-semibold text-white">🚀 Lock-In Pass</p>
+                    <p class="text-xs text-gray-400">2 Years • Individual</p>
+                    <div class="flex gap-2 mt-2">
+                        <form action="/create-checkout-session" method="POST">
+                            <input type="hidden" name="plan" value="individual_biennial">
+                            <button type="submit" class="btn-stripe text-xs px-3 py-2">$290 (Stripe)</button>
+                        </form>
+                        <button onclick="initiateRazorpayPayment('individual_biennial')" class="btn-razorpay text-xs px-3 py-2">₹24,000 (Razorpay)</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- GitHub Connection -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             <div class="card-dark">
                 <p class="text-[#6b7280] text-sm">GitHub Connection</p>
                 <p class="text-xl font-bold mt-1 text-white">GitHub Status: Not Connected</p>
@@ -213,7 +326,49 @@
         </div>
     </footer>
 
+    <!-- ============================================================
+    RAZORPAY SCRIPT (For Indian Payments)
+    ============================================================ -->
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <script>
+        function initiateRazorpayPayment(plan) {
+            fetch('/create-razorpay-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ plan: plan })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+
+                var options = {
+                    "key": data.key_id,
+                    "amount": data.amount,
+                    "currency": data.currency,
+                    "name": "Aegis",
+                    "description": "AI QA Engineer Subscription",
+                    "order_id": data.order_id,
+                    "handler": function (response) {
+                        alert("✅ Payment successful! Your subscription is now active.");
+                        window.location.reload();
+                    },
+                    "modal": {
+                        "ondismiss": function () {
+                            alert("Payment cancelled.");
+                        }
+                    }
+                };
+                var rzp = new Razorpay(options);
+                rzp.open();
+            })
+            .catch(err => {
+                alert('Error initiating payment: ' + err.message);
+            });
+        }
+
         function copyReferral() {
             const input = document.getElementById('referralInput');
             input.select();

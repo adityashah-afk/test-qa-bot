@@ -801,6 +801,68 @@ def stripe_webhook():
         conn.close()
     return jsonify({"status": "success"}), 200
 
+    # ============================================================
+# STRIPE (KEEP THIS - FOR INTERNATIONAL)
+# ============================================================
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+# ... (your existing Stripe routes like /create-checkout-session stay exactly as they are) ...
+
+# ============================================================
+# RAZORPAY (ADD THIS - FOR INDIA / UPI)
+# ============================================================
+import razorpay
+
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET")
+RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET")
+
+# Amounts in paisa (INR)
+PRICE_MAP_RAZORPAY = {
+    'monthly': {'amount': 2400, 'desc': 'Developer ($29)'},       # ₹2,400
+    'team_monthly': {'amount': 4000, 'desc': 'Team ($49)'},        # ₹4,000
+    'team_annual': {'amount': 165000, 'desc': 'Founder\'s Pass'},  # ₹1,65,000
+}
+
+client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+
+@app.route("/create-razorpay-order", methods=['POST'])
+def create_razorpay_order():
+    if 'user_id' not in session:
+        return jsonify({"error": "Unauthorized"}), 401
+    user = get_user_by_id(session['user_id'])
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    data = request.get_json()
+    plan = data.get('plan', 'monthly')
+    if plan not in PRICE_MAP_RAZORPAY:
+        return jsonify({"error": "Invalid plan"}), 400
+
+    price_info = PRICE_MAP_RAZORPAY[plan]
+    try:
+        order_data = {
+            'amount': price_info['amount'] * 100,
+            'currency': 'INR',
+            'receipt': f'receipt_{user[0]}_{plan}',
+            'notes': {'user_id': user[0], 'plan': plan}
+        }
+        order = client.order.create(data=order_data)
+        return jsonify({
+            'order_id': order['id'],
+            'amount': order['amount'],
+            'currency': order['currency'],
+            'key_id': RAZORPAY_KEY_ID
+        })
+    except Exception as e:
+        logger.error(f"Razorpay error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/razorpay-webhook", methods=['POST'])
+def razorpay_webhook():
+    # ... (same webhook logic as Stripe, update subscription status) ...
+    # I will provide the full code in the final block below.
+    return jsonify({"status": "success"}), 200
+
 # ============================================================
 # TEAM ROUTES
 # ============================================================
