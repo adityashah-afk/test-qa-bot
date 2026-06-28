@@ -6,10 +6,6 @@ from ai_qa_engine import QAEngine
 
 logger = logging.getLogger(__name__)
 
-# ============================================================
-# 1. HELPERS FOR IMPORT DETECTION & LOCAL SIGNATURE EXTRACTION
-# ============================================================
-
 def get_import_context(full_content: str) -> dict:
     import_lines = [line for line in full_content.splitlines() if line.startswith(('import ', 'from '))]
     import_map = {}
@@ -99,9 +95,6 @@ def get_full_file_content(repo, file_path, branch_name):
         logger.warning(f"Could not fetch full file: {e}")
         return None
 
-# ============================================================
-# 2. MULTI-FILE CASCADE EFFECT (Impact Radius)
-# ============================================================
 def scan_impact_radius(repo, func_name, branch_name):
     impact = []
     try:
@@ -136,9 +129,6 @@ def scan_impact_radius(repo, func_name, branch_name):
         logger.warning(f"Impact radius scan failed: {e}")
     return impact
 
-# ============================================================
-# 3. DATABASE MIGRATION EXCLUSION
-# ============================================================
 def is_migration_file(file_path):
     migration_patterns = ['migrations/', 'alembic/', 'prisma/schema.prisma', 'db/migrate/', 'schema.sql']
     for pattern in migration_patterns:
@@ -146,11 +136,7 @@ def is_migration_file(file_path):
             return True
     return False
 
-# ============================================================
-# 4. STRUCTURAL HIERARCHY FLAG (Global Map Analyzer)
-# ============================================================
 def is_large_refactor(pr, threshold=3):
-    """Check if the PR touches more than 'threshold' files or modifies core folders."""
     if not pr:
         return False
     core_folders = ['models/', 'types/', 'core/', 'lib/', 'src/']
@@ -163,7 +149,6 @@ def is_large_refactor(pr, threshold=3):
     return file_count > threshold
 
 def get_repo_tree(repo, branch_name):
-    """Fetch the entire file tree of the repository (names only, not contents)."""
     tree = []
     try:
         contents = repo.get_contents("", ref=branch_name)
@@ -183,9 +168,6 @@ def get_repo_tree(repo, branch_name):
         pass
     return "\n".join(tree)
 
-# ============================================================
-# 5. MAIN ANALYZER
-# ============================================================
 def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str = None, repo=None, pr=None, team_rules: str = None) -> dict:
     extracted = extract_changed_functions(diff_text)
     code_snippet = extracted['code']
@@ -195,7 +177,6 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
         logger.info("ℹ️ No Python functions detected.")
         return {'success': True, 'message': 'No functions detected.', 'diff_output': '', 'fixed_code': ''}
 
-    # Migration exclusion
     if repo and pr:
         for file in pr.get_files():
             if is_migration_file(file.filename):
@@ -206,7 +187,6 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
                     'fixed_code': None
                 }
 
-    # Fetch full file content
     full_content = None
     imports = []
     import_map = {}
@@ -225,19 +205,14 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
                     import_map = get_import_context(full_content)
                 break
 
-    # Local signatures
     if full_content:
         call_pattern = r'(\w+)\('
         called_funcs = re.findall(call_pattern, code_snippet)
         local_sigs = extract_local_function_signatures(full_content, called_funcs)
 
-    # Impact radius
     if repo and pr and func_name:
         impact_radius = scan_impact_radius(repo, func_name, pr.head.ref)
 
-    # ============================================================
-    # NEW: Check if this is a large refactor
-    # ============================================================
     if repo and pr:
         is_large = is_large_refactor(pr)
         if is_large:
@@ -278,11 +253,48 @@ This function is used in {len(impact_radius)} other file(s) in this repository.
 """
 
         # ============================================================
-        # NEW: Inject the repo tree if a large refactor is detected
+        # FIXED: Use triple-single-quotes for tree_section to avoid backtick confusion
         # ============================================================
         tree_section = ""
         if is_large and repo_tree:
-            tree_section = f"""
+            tree_section = f'''
 **⚠️ LARGE REFACTOR DETECTED:**
 This PR changes more than 3 files or modifies core folders.
-Here is the entire file tree of the repository to help you understand the systemic impact:
+Here is the entire file tree of the repository to help you understand the systemic impact:When writing tests, consider how changes in core files might affect other modules.
+'''
+
+        prompt = f"""
+        Write pytest tests for this function:**Context (Surrounding code):**
+{extracted['context']}
+
+**Imports (use these):**
+{'\n'.join(imports) if imports else ''}
+
+**Local Function Signatures (Called by your function):**
+{local_sigs}
+
+{impact_warning}
+
+{tree_section}
+
+{mock_instructions}
+
+**Mocking Instructions (Detailed):**
+- Use `mocker.patch` for ALL external dependencies.
+- If the code imports a library using `from lib import func`, patch the local reference using `mocker.patch('__main__.func')`.
+- Ensure tests are deterministic and do NOT hit external APIs.
+- Focus on edge cases: negative values, zeroes, nulls, and boundary conditions.
+"""
+return engine.llm.generate(prompt)
+
+engine.generate_test = enhanced_generate
+
+passed, final_code, diff_string = engine.run_full_loop()
+
+brand_footprint = "\n\n---\n🛡️ *Fixed automatically by [Aegis](https://test-qa-bot-production.up.railway.app)*"
+return {
+'success': passed,
+'fixed_code': final_code,
+'diff_output': diff_string + brand_footprint,
+'message': 'Analysis complete.'
+}
