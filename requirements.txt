@@ -7,6 +7,6 @@ stripe==9.0.0
 requests==2.31.0
 redis==5.0.1
 sendgrid==6.10.0
-razorpay==1.4.0
+razorpay==1.4.2
 setuptools==71.1.0
 wheel==0.42.0
