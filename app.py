@@ -418,12 +418,20 @@ def count_referrals(user_id):
     conn.close()
     return count
 
-def add_referral(referrer_id, referred_user_id):
+ddef add_referral(referrer_id, referred_user_id):
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('INSERT INTO referrals (referrer_id, referred_user_id) VALUES (?, ?)', (referrer_id, referred_user_id))
     conn.commit()
     conn.close()
+
+def get_user_by_referral_code(code):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT * FROM users WHERE referral_code = ?', (code,))
+    user = c.fetchone()
+    conn.close()
+    return user
 
 # ============================================================
 # LANGUAGE DETECTION & ROUTER
