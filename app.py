@@ -426,7 +426,7 @@ def add_referral(referrer_id, referred_user_id):
     conn.close()
 
 # ============================================================
-# ⭐ MISSING FUNCTION – NOW ADDED
+# ⭐ ADDED: The missing function for referral lookup
 # ============================================================
 def get_user_by_referral_code(code):
     conn = get_db_connection()
@@ -1128,6 +1128,7 @@ def webhook():
     if user:
         org_id = user[14] if len(user) > 14 else None
         if org_id:
+            # These functions are defined in code_scanner.py – if missing, handle gracefully
             try:
                 from code_scanner import get_org_api_key, get_org_rules
                 org_api_key = get_org_api_key(org_id)
