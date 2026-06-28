@@ -6,6 +6,4 @@ python-dotenv==1.0.0
 stripe==9.0.0
 requests==2.31.0
 redis==5.0.1
-flask-oauthlib==0.9.6
 sendgrid==6.10.0
-werkzeug==2.3.8

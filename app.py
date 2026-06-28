@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Aegis - Enterprise Ready Backend
-Includes: OAuth (Google/GitHub), Email Verification, Stripe Products, Redis Caching
+Includes: Email Verification, Stripe Products, Redis Caching (No OAuth)
 """
 
 import os
@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ============================================================
-# LOGGING SETUP (MUST BE BEFORE ANY LOGGER USAGE)
+# LOGGING SETUP
 # ============================================================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -46,11 +46,6 @@ except Exception as e:
     redis_client = None
     CACHE_ENABLED = False
     logger.warning(f"⚠️ Redis connection failed: {e}. Caching disabled.")
-
-# ============================================================
-# OAuth Imports
-# ============================================================
-from flask_oauthlib.client import OAuth
 
 # ============================================================
 # Email Imports (SendGrid)
@@ -84,37 +79,6 @@ app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
-
-# ============================================================
-# OAuth Setup
-# ============================================================
-oauth = OAuth(app)
-
-google = oauth.remote_app(
-    'google',
-    consumer_key=os.getenv('GOOGLE_CLIENT_ID'),
-    consumer_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
-    request_token_params={
-        'scope': 'email profile',
-    },
-    base_url='https://www.googleapis.com/oauth2/v1/',
-    request_token_url=None,
-    access_token_method='POST',
-    access_token_url='https://oauth2.googleapis.com/token',
-    authorize_url='https://accounts.google.com/o/oauth2/auth',
-)
-
-github_oauth = oauth.remote_app(
-    'github',
-    consumer_key=os.getenv('GITHUB_OAUTH_CLIENT_ID'),
-    consumer_secret=os.getenv('GITHUB_OAUTH_CLIENT_SECRET'),
-    request_token_params={'scope': 'user:email'},
-    base_url='https://api.github.com/',
-    request_token_url=None,
-    access_token_method='POST',
-    access_token_url='https://github.com/login/oauth/access_token',
-    authorize_url='https://github.com/login/oauth/authorize',
-)
 
 # ============================================================
 # Config
@@ -169,7 +133,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
-            password_hash TEXT,
+            password_hash TEXT NOT NULL,
             email TEXT UNIQUE,
             email_verified BOOLEAN DEFAULT 0,
             verification_code TEXT,
@@ -189,9 +153,7 @@ def init_db():
             org_id INTEGER,
             role TEXT DEFAULT 'member',
             full_name TEXT,
-            company TEXT,
-            google_id TEXT,
-            github_id TEXT
+            company TEXT
         )
     ''')
     c.execute('''
@@ -289,7 +251,7 @@ def init_db():
 def migrate_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    columns = ['model', 'trial_expires_at', 'referral_code', 'referred_by', 'org_id', 'role', 'full_name', 'email', 'company', 'google_id', 'github_id']
+    columns = ['model', 'trial_expires_at', 'referral_code', 'referred_by', 'org_id', 'role', 'full_name', 'email', 'company']
     for col in columns:
         try:
             c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT ''")
@@ -361,22 +323,6 @@ def get_user_by_email(email):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('SELECT * FROM users WHERE email = ?', (email,))
-    user = c.fetchone()
-    conn.close()
-    return user
-
-def get_user_by_github_id(github_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('SELECT * FROM users WHERE github_id = ?', (github_id,))
-    user = c.fetchone()
-    conn.close()
-    return user
-
-def get_user_by_google_id(google_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('SELECT * FROM users WHERE google_id = ?', (google_id,))
     user = c.fetchone()
     conn.close()
     return user
@@ -482,115 +428,6 @@ def health_check():
     return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
 
 # ============================================================
-# OAUTH ROUTES (Google + GitHub)
-# ============================================================
-@app.route("/oauth/google")
-def oauth_google():
-    return google.authorize(callback=url_for('oauth_google_callback', _external=True))
-
-@app.route("/oauth/google/callback")
-def oauth_google_callback():
-    resp = google.authorized_response()
-    if resp is None or resp.get('access_token') is None:
-        flash('Access denied.')
-        return redirect(url_for('login'))
-    session['oauth_token'] = (resp['access_token'], '')
-    user_info = google.get('userinfo')
-    email = user_info.data.get('email')
-    name = user_info.data.get('name')
-    google_id = user_info.data.get('id')
-    
-    # Check if user exists
-    user = get_user_by_google_id(google_id)
-    if not user:
-        user = get_user_by_email(email)
-        if user:
-            # Link Google ID to existing account
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute('UPDATE users SET google_id = ? WHERE id = ?', (google_id, user[0]))
-            conn.commit()
-            conn.close()
-        else:
-            # Create new user
-            trial_expiry = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
-            referral_code = generate_referral_code()
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO users (full_name, email, google_id, trial_expires_at, referral_code, email_verified)
-                VALUES (?, ?, ?, ?, ?, 1)
-            ''', (name, email, google_id, trial_expiry, referral_code))
-            user_id = c.lastrowid
-            conn.commit()
-            conn.close()
-            user = get_user_by_id(user_id)
-    if user:
-        session['user_id'] = user[0]
-        session['username'] = user[1]
-        session.permanent = True
-        flash('Logged in successfully!')
-        return redirect(url_for('dashboard'))
-    flash('Login failed.')
-    return redirect(url_for('login'))
-
-@app.route("/oauth/github")
-def oauth_github():
-    return github_oauth.authorize(callback=url_for('oauth_github_callback', _external=True))
-
-@app.route("/oauth/github/callback")
-def oauth_github_callback():
-    resp = github_oauth.authorized_response()
-    if resp is None or resp.get('access_token') is None:
-        flash('Access denied.')
-        return redirect(url_for('login'))
-    session['github_oauth_token'] = (resp['access_token'], '')
-    user_info = github_oauth.get('user')
-    github_id = str(user_info.data.get('id'))
-    login = user_info.data.get('login')
-    email = user_info.data.get('email')
-    
-    # If email is None, fetch emails
-    if not email:
-        emails = github_oauth.get('user/emails')
-        for e in emails.data:
-            if e.get('primary'):
-                email = e.get('email')
-                break
-    
-    user = get_user_by_github_id(github_id)
-    if not user and email:
-        user = get_user_by_email(email)
-        if user:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute('UPDATE users SET github_id = ? WHERE id = ?', (github_id, user[0]))
-            conn.commit()
-            conn.close()
-        else:
-            trial_expiry = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
-            referral_code = generate_referral_code()
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO users (username, email, github_id, trial_expires_at, referral_code, email_verified)
-                VALUES (?, ?, ?, ?, ?, 1)
-            ''', (login, email, github_id, trial_expiry, referral_code))
-            user_id = c.lastrowid
-            conn.commit()
-            conn.close()
-            user = get_user_by_id(user_id)
-    
-    if user:
-        session['user_id'] = user[0]
-        session['username'] = user[1]
-        session.permanent = True
-        flash('Logged in successfully!')
-        return redirect(url_for('dashboard'))
-    flash('Login failed.')
-    return redirect(url_for('login'))
-
-# ============================================================
 # TRY-IT-NOW DEMO
 # ============================================================
 @app.route("/try", methods=['GET', 'POST'])
@@ -675,7 +512,7 @@ jobs:
           python-version: '3.13'
       - name: Install Aegis
         run: |
-          pip install flask PyGithub openai pytest python-dotenv stripe requests redis flask-oauthlib sendgrid
+          pip install flask PyGithub openai pytest python-dotenv stripe requests redis sendgrid
       - name: Run Aegis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -774,9 +611,6 @@ def signup():
         <input type="hidden" name="ref" value="{{ request.args.get('ref') or '' }}" />
         <button type="submit" class="btn-primary">Start Free Trial</button>
         </form>
-        <div class="relative my-6"><div class="absolute inset-0 flex items-center"><div class="w-full border-t border-[#1a1a1a]"></div></div><div class="relative flex justify-center text-xs"><span class="bg-[#0a0a0a] px-2 text-[#4b5563]">OR</span></div></div>
-        <a href="/oauth/google" class="btn-social mb-3">🔵 Sign up with Google</a>
-        <a href="/oauth/github" class="btn-social">⚫ Sign up with GitHub</a>
         <p class="text-sm text-[#4b5563] mt-4">Already have an account? <a href="/login" class="text-[#3b82f6] hover:underline">Log in</a></p>
         </div></body></html>
     '''
@@ -867,9 +701,7 @@ def login():
         .input-dark {{ background: #000000; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; }}
         .input-dark:focus {{ outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }}
         .btn-primary {{ background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }}
-        .btn-primary:hover {{ background: #2563eb; }}
-        .btn-social {{ background: #1a1a1a; border: 1px solid #2a2a2a; color: white; font-weight: 500; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; display: block; text-align: center; }}
-        .btn-social:hover {{ background: #2a2a2a; border-color: #3b82f6; }}</style>
+        .btn-primary:hover {{ background: #2563eb; }}</style>
         </head><body class="min-h-screen flex items-center justify-center">
         <div class="card p-8 rounded-2xl max-w-md w-full">
         <h1 class="text-2xl font-bold mb-6 text-white">Log In</h1>
@@ -879,9 +711,6 @@ def login():
         <input type="password" name="password" placeholder="Password" class="input-dark mb-4" />
         <button type="submit" class="btn-primary">Log In</button>
         </form>
-        <div class="relative my-6"><div class="absolute inset-0 flex items-center"><div class="w-full border-t border-[#1a1a1a]"></div></div><div class="relative flex justify-center text-xs"><span class="bg-[#0a0a0a] px-2 text-[#4b5563]">OR</span></div></div>
-        <a href="/oauth/google" class="btn-social mb-3">🔵 Sign in with Google</a>
-        <a href="/oauth/github" class="btn-social">⚫ Sign in with GitHub</a>
         <p class="text-sm text-[#4b5563] mt-4">No account? <a href="/signup" class="text-[#3b82f6] hover:underline">Create one</a></p>
         </div></body></html>
     '''
