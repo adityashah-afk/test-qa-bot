@@ -1,6 +1,10 @@
+"""
+JavaScript Analyzer - Full Jest Execution
+Requires Node.js to be installed (already on Railway via nixpacks)
+"""
+
 import os
 import subprocess
-import json
 import tempfile
 import logging
 from pathlib import Path
@@ -16,7 +20,7 @@ def extract_js_functions(diff_text: str) -> str:
     in_func = False
     
     for line in lines:
-        if line.startswith('+') and ('function ' in line or '=>' in line or 'const ' in line):
+        if line.startswith('+') and ('function ' in line or '=>' in line or 'const ' in line or 'class ' in line):
             if current:
                 functions.append('\n'.join(current))
                 current = []
@@ -24,8 +28,9 @@ def extract_js_functions(diff_text: str) -> str:
             current.append(line[1:])
         elif in_func and line.startswith('+'):
             current.append(line[1:])
-            if '}' in line:
-                functions.append('\n'.join(current))
+            if '}' in line or ';' in line:
+                if current:
+                    functions.append('\n'.join(current))
                 current = []
                 in_func = False
         elif in_func and not line.startswith('+'):
@@ -40,26 +45,51 @@ def extract_js_functions(diff_text: str) -> str:
     return '\n\n'.join(functions)
 
 def run_jest_test(test_code: str, source_code: str) -> Tuple[bool, str]:
-    """Run Jest tests in a temporary sandbox."""
-    dangerous = ['child_process', 'execSync', 'spawn', 'fs.rmSync']
+    """Run Jest tests in a temporary sandbox with security checks."""
+    # Security scan for dangerous JS
+    dangerous = ['child_process', 'execSync', 'spawn', 'fs.rmSync', 'process.exit', 'require("child_process")']
     for pattern in dangerous:
         if pattern in test_code or pattern in source_code:
-            return False, f"Security violation: Blocked '{pattern}'"
+            return False, f"❌ Security violation: Blocked '{pattern}'"
     
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Write source and test files
             src_path = Path(tmpdir) / "index.js"
             tst_path = Path(tmpdir) / "index.test.js"
             src_path.write_text(source_code)
             tst_path.write_text(test_code)
 
-            pkg = Path(tmpdir) / "package.json"
-            pkg.write_text('{"scripts": {"test": "jest"}, "devDependencies": {"jest": "29.7.0"}}')
+            # 2. Write package.json with Jest
+            pkg_path = Path(tmpdir) / "package.json"
+            pkg_path.write_text('{"scripts": {"test": "jest"}, "devDependencies": {"jest": "29.7.0"}}')
 
-            if 'describe(' in test_code or 'test(' in test_code:
-                return True, "✅ Jest tests passed (simulated)."
+            # 3. Install dependencies (timeout 30s)
+            install = subprocess.run(
+                ['npm', 'install', '--silent'],
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if install.returncode != 0:
+                return False, f"❌ npm install failed: {install.stderr[:200]}"
+
+            # 4. Run tests (timeout 10s)
+            result = subprocess.run(
+                ['npm', 'test', '--', '--silent'],
+                cwd=tmpdir,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                return True, result.stdout
             else:
-                return False, "❌ Jest test missing assertions."
+                return False, result.stdout + "\n" + result.stderr
 
+    except subprocess.TimeoutExpired:
+        return False, "❌ Test timed out (10s). Potential infinite loop."
     except Exception as e:
-        return False, f"Error running Jest: {e}"
+        return False, f"❌ Jest Error: {e}"

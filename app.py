@@ -124,7 +124,25 @@ def send_verification_email(email, code):
 # ============================================================
 # Database
 # ============================================================
-DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
+import sqlite3
+import psycopg2
+
+# Database configuration
+DATABASE_URL = os.getenv("DATABASE_URL")  # Railway PostgreSQL URL
+if DATABASE_URL:
+    # PostgreSQL mode
+    import psycopg2
+    def get_db_connection():
+        return psycopg2.connect(DATABASE_URL)
+    DB_TYPE = "postgres"
+    logger.info("✅ Using PostgreSQL database")
+else:
+    # SQLite mode (fallback)
+    DB_PATH = os.path.join(os.path.dirname(__file__), 'aegis.db')
+    def get_db_connection():
+        return sqlite3.connect(DB_PATH)
+    DB_TYPE = "sqlite"
+    logger.info("ℹ️ Using SQLite database (fallback)")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
