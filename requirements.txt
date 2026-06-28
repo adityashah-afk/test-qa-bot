@@ -3,10 +3,11 @@ PyGithub==2.1.1
 openai==1.6.1
 pytest==8.0.0
 python-dotenv==1.0.0
-stripe==9.0.0
+#
 requests==2.31.0
 redis==5.0.1
 sendgrid==6.10.0
 razorpay==1.4.2
 setuptools==71.1.0
 wheel==0.42.0paddle-python
+paddle-python
