@@ -426,7 +426,7 @@ def add_referral(referrer_id, referred_user_id):
     conn.close()
 
 # ============================================================
-# ⭐ ADDED: The missing function for referral lookup
+# ⭐ CRITICAL FIX: The missing function (added here)
 # ============================================================
 def get_user_by_referral_code(code):
     conn = get_db_connection()
@@ -613,6 +613,7 @@ def signup():
                 VALUES (?, ?, ?, ?, ?, ?, ?, 0)
             ''', (full_name, email, company, username, password_hash, trial_expiry, my_code))
             user_id = c.lastrowid
+            # Referral logic (now safe because get_user_by_referral_code exists)
             if referral_code:
                 referrer = get_user_by_referral_code(referral_code)
                 if referrer:
@@ -1128,7 +1129,6 @@ def webhook():
     if user:
         org_id = user[14] if len(user) > 14 else None
         if org_id:
-            # These functions are defined in code_scanner.py – if missing, handle gracefully
             try:
                 from code_scanner import get_org_api_key, get_org_rules
                 org_api_key = get_org_api_key(org_id)
