@@ -7,7 +7,7 @@ from ai_qa_engine import QAEngine
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------
-# 1. Helper Functions
+# Helpers (unchanged)
 # --------------------------------------------------------------
 
 def get_import_context(full_content: str) -> dict:
@@ -141,9 +141,79 @@ def is_migration_file(file_path):
     return False
 
 # --------------------------------------------------------------
-# 2. Main Analyzer
+# NEW: Top-level prompt builder (no nesting!)
 # --------------------------------------------------------------
+def build_test_prompt(
+    code_snippet: str,
+    use_mock: bool,
+    context: str,
+    imports: list,
+    local_sigs: str,
+    impact_radius: list,
+    import_map: dict,
+    engine: QAEngine
+) -> str:
+    if use_mock:
+        return """
+import pytest
+from buggy_code import calculate_discount
+def test_discount_edge_cases():
+    assert calculate_discount(100, 10) == 90.0
+"""
 
+    mock_instructions = ""
+    if import_map:
+        mock_instructions = "**Detected Imports & Mocking Strategy:**\n"
+        for var, path in import_map.items():
+            if 'boto3' in path or 'kafka' in path or 'sqlalchemy' in path or 'requests' in path:
+                mock_instructions += "- The code uses `{}` (imported from `{}`). To mock it, use `mocker.patch('{}')` if it's a module-level import.\n".format(var, path, path)
+                mock_instructions += "- If the code uses `from {} import {}`, patch the local reference using `mocker.patch('__main__.{}')`.\n".format(path.split('.')[0], var, var)
+    else:
+        mock_instructions = "**Mocking Strategy:** Use `mocker.patch` for all external dependencies."
+
+    impact_warning = ""
+    if impact_radius:
+        impact_warning = """
+**⚠️ IMPACT RADIUS WARNING (CRITICAL):**
+This function is used in {} other file(s) in this repository.
+- **DO NOT change the function signature, return type, or input parameters.**
+- You must maintain backward compatibility.
+- Here is where it is used:
+{}
+""".format(len(impact_radius), json.dumps(impact_radius[:3], indent=2))
+
+    prompt = """
+Write pytest tests for this function:**Context (Surrounding code):**
+{}
+
+**Imports (use these):**
+{}
+
+**Local Function Signatures (Called by your function):**
+{}
+
+{}
+
+{}
+
+**Mocking Instructions (Detailed):**
+- Use `mocker.patch` for ALL external dependencies.
+- If the code imports a library using `from lib import func`, patch the local reference using `mocker.patch('__main__.func')`.
+- Ensure tests are deterministic and do NOT hit external APIs.
+- Focus on edge cases: negative values, zeroes, nulls, and boundary conditions.
+""".format(
+        code_snippet,
+        context,
+        '\n'.join(imports) if imports else '',
+        local_sigs,
+        impact_warning,
+        mock_instructions
+    )
+    return prompt
+
+# --------------------------------------------------------------
+# Main analyzer (now using the top-level builder)
+# --------------------------------------------------------------
 def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str = None, repo=None, pr=None, team_rules: str = None) -> dict:
     extracted = extract_changed_functions(diff_text)
     code_snippet = extracted['code']
@@ -196,78 +266,27 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
     engine.load_code_from_string(code_snippet)
 
     # --------------------------------------------------------------
-    # Override the test generation with custom prompt injection
+    # Assign a lambda that calls the top-level builder
+    # This is a single line – no indentation risk!
     # --------------------------------------------------------------
-    def custom_generate_test(code_snippet):
-        if use_mock:
-            return """
-import pytest
-from buggy_code import calculate_discount
-def test_discount_edge_cases():
-    assert calculate_discount(100, 10) == 90.0
-"""
-        # Build mocking instructions
-        mock_instructions = ""
-        if import_map:
-            mock_instructions = "**Detected Imports & Mocking Strategy:**\n"
-            for var, path in import_map.items():
-                if 'boto3' in path or 'kafka' in path or 'sqlalchemy' in path or 'requests' in path:
-                    mock_instructions += "- The code uses `{}` (imported from `{}`). To mock it, use `mocker.patch('{}')` if it's a module-level import.\n".format(var, path, path)
-                    mock_instructions += "- If the code uses `from {} import {}`, patch the local reference using `mocker.patch('__main__.{}')`.\n".format(path.split('.')[0], var, var)
-        else:
-            mock_instructions = "**Mocking Strategy:** Use `mocker.patch` for all external dependencies."
+    engine.generate_test = lambda snippet: build_test_prompt(
+        snippet,
+        use_mock,
+        extracted['context'],
+        imports,
+        local_sigs,
+        impact_radius,
+        import_map,
+        engine
+    )
 
-        impact_warning = ""
-        if impact_radius:
-            impact_warning = """
-**⚠️ IMPACT RADIUS WARNING (CRITICAL):**
-This function is used in {} other file(s) in this repository.
-- **DO NOT change the function signature, return type, or input parameters.**
-- You must maintain backward compatibility.
-- Here is where it is used:
-{}
-""".format(len(impact_radius), json.dumps(impact_radius[:3], indent=2))
+    # Run the loop
+    passed, final_code, diff_string = engine.run_full_loop()
 
-        prompt = """
-        Write pytest tests for this function:**Context (Surrounding code):**
-{}
-
-**Imports (use these):**
-{}
-
-**Local Function Signatures (Called by your function):**
-{}
-
-{}
-
-{}
-
-**Mocking Instructions (Detailed):**
-- Use `mocker.patch` for ALL external dependencies.
-- If the code imports a library using `from lib import func`, patch the local reference using `mocker.patch('__main__.func')`.
-- Ensure tests are deterministic and do NOT hit external APIs.
-- Focus on edge cases: negative values, zeroes, nulls, and boundary conditions.
-""".format(
-    code_snippet,
-    extracted['context'],
-    '\n'.join(imports) if imports else '',
-    local_sigs,
-    impact_warning,
-    mock_instructions
-)
-# This return is INSIDE the function – perfectly valid
-return engine.llm.generate(prompt)
-
-# Assign the custom function
-engine.generate_test = custom_generate_test
-
-# Run the loop
-passed, final_code, diff_string = engine.run_full_loop()
-
-brand_footprint = "\n\n---\n🛡️ *Fixed automatically by [Aegis](https://test-qa-bot-production.up.railway.app)*"
-return {
-'success': passed,
-'fixed_code': final_code,
-'diff_output': diff_string + brand_footprint,
-'message': 'Analysis complete.'
-}
+    brand_footprint = "\n\n---\n🛡️ *Fixed automatically by [Aegis](https://test-qa-bot-production.up.railway.app)*"
+    return {
+        'success': passed,
+        'fixed_code': final_code,
+        'diff_output': diff_string + brand_footprint,
+        'message': 'Analysis complete.'
+    }
