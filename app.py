@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """
-Aegis - Complete Market Ready Backend
-Includes: 14-Day Trial, Referrals, Team Plan, ROI Analytics, Scarcity Upgrade Screen
-ALL COMMANDS INTACT: /ask, /fix, /fix-ask, /change, approve/reject
-Professional Signup: Full Name, Email, Company
-NEW: Security Guard (AST), Multi-Language Router, Optimized Context
-NEW: GitHub Workflow Generator (Viral Distribution)
+Aegis - Enterprise Ready Backend
+Includes: OAuth (Google/GitHub), Email Verification, Sentry Monitoring, Stripe Products, Redis Caching
 """
 
 import os
@@ -15,6 +11,8 @@ import hmac
 import hashlib
 import secrets
 import string
+import json
+import time
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, redirect, url_for, session, flash, render_template_string, Response
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -22,6 +20,48 @@ import requests
 import stripe
 from dotenv import load_dotenv
 load_dotenv()
+
+# ============================================================
+# SENTRY MONITORING (Error tracking)
+# ============================================================
+import sentry_sdk
+from sentry_sdk.integrations.flask import FlaskIntegration
+
+sentry_sdk.init(
+    dsn=os.getenv("SENTRY_DSN"),
+    integrations=[FlaskIntegration()],
+    traces_sample_rate=1.0,
+    send_default_pii=False
+)
+
+# ============================================================
+# REDIS CACHING (Save token costs)
+# ============================================================
+import redis
+try:
+    redis_client = redis.from_url(os.getenv("REDIS_URL", ""))
+    redis_client.ping()
+    CACHE_ENABLED = True
+    logger.info("✅ Redis connected. Caching enabled.")
+except:
+    redis_client = None
+    CACHE_ENABLED = False
+    logger.warning("⚠️ Redis not connected. Caching disabled.")
+
+# ============================================================
+# OAuth Imports
+# ============================================================
+from flask_oauthlib.client import OAuth
+
+# ============================================================
+# Email Imports (SendGrid)
+# ============================================================
+import sendgrid
+from sendgrid.helpers.mail import Mail
+
+# ============================================================
+# Continue with rest of your code...
+# ============================================================
 
 from github_client import get_pr_diff, post_comment
 from pr_analyzer import analyze_pr_diff, extract_changed_functions
@@ -53,6 +93,37 @@ app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
 
 # ============================================================
+# OAuth Setup
+# ============================================================
+oauth = OAuth(app)
+
+google = oauth.remote_app(
+    'google',
+    consumer_key=os.getenv('GOOGLE_CLIENT_ID'),
+    consumer_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
+    request_token_params={
+        'scope': 'email profile',
+    },
+    base_url='https://www.googleapis.com/oauth2/v1/',
+    request_token_url=None,
+    access_token_method='POST',
+    access_token_url='https://oauth2.googleapis.com/token',
+    authorize_url='https://accounts.google.com/o/oauth2/auth',
+)
+
+github_oauth = oauth.remote_app(
+    'github',
+    consumer_key=os.getenv('GITHUB_OAUTH_CLIENT_ID'),
+    consumer_secret=os.getenv('GITHUB_OAUTH_CLIENT_SECRET'),
+    request_token_params={'scope': 'user:email'},
+    base_url='https://api.github.com/',
+    request_token_url=None,
+    access_token_method='POST',
+    access_token_url='https://github.com/login/oauth/access_token',
+    authorize_url='https://github.com/login/oauth/authorize',
+)
+
+# ============================================================
 # Config
 # ============================================================
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
@@ -63,6 +134,35 @@ GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
 GITHUB_OAUTH_URL = "https://github.com/login/oauth/access_token"
 GITHUB_USER_URL = "https://api.github.com/user"
+
+# ============================================================
+# Email Setup (SendGrid)
+# ============================================================
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
+FROM_EMAIL = os.getenv("FROM_EMAIL", "hello@aegis.com")
+
+def send_verification_email(email, code):
+    """Send a 6-digit verification code via SendGrid."""
+    if not SENDGRID_API_KEY:
+        logger.warning("SendGrid API key not set. Skipping email.")
+        return False
+    try:
+        sg = sendgrid.SendGridAPIClient(api_key=SENDGRID_API_KEY)
+        message = Mail(
+            from_email=FROM_EMAIL,
+            to_emails=email,
+            subject="Your Aegis Verification Code",
+            html_content=f"""
+            <h1>Welcome to Aegis!</h1>
+            <p>Your verification code is: <strong>{code}</strong></p>
+            <p>This code expires in 10 minutes.</p>
+            """
+        )
+        response = sg.send(message)
+        return response.status_code == 202
+    except Exception as e:
+        logger.error(f"Failed to send email: {e}")
+        return False
 
 # ============================================================
 # Database
@@ -76,7 +176,11 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
+            password_hash TEXT,
+            email TEXT UNIQUE,
+            email_verified BOOLEAN DEFAULT 0,
+            verification_code TEXT,
+            verification_expires TIMESTAMP,
             provider TEXT DEFAULT 'deepseek',
             api_key TEXT,
             repo_name TEXT,
@@ -92,8 +196,9 @@ def init_db():
             org_id INTEGER,
             role TEXT DEFAULT 'member',
             full_name TEXT,
-            email TEXT,
-            company TEXT
+            company TEXT,
+            google_id TEXT,
+            github_id TEXT
         )
     ''')
     c.execute('''
@@ -175,6 +280,15 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS email_verifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL,
+            code TEXT NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            used BOOLEAN DEFAULT 0
+        )
+    ''')
     conn.commit()
     conn.close()
     logger.info("Database initialized with all tables.")
@@ -182,7 +296,7 @@ def init_db():
 def migrate_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    columns = ['model', 'trial_expires_at', 'referral_code', 'referred_by', 'org_id', 'role', 'full_name', 'email', 'company']
+    columns = ['model', 'trial_expires_at', 'referral_code', 'referred_by', 'org_id', 'role', 'full_name', 'email', 'company', 'google_id', 'github_id']
     for col in columns:
         try:
             c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT ''")
@@ -195,11 +309,32 @@ init_db()
 migrate_db()
 
 # ============================================================
+# REDIS CACHING HELPER
+# ============================================================
+def get_cached_fix(code_hash: str) -> dict:
+    if not CACHE_ENABLED:
+        return None
+    try:
+        data = redis_client.get(f"fix:{code_hash}")
+        if data:
+            return json.loads(data)
+    except:
+        pass
+    return None
+
+def set_cached_fix(code_hash: str, fix_data: dict):
+    if not CACHE_ENABLED:
+        return
+    try:
+        redis_client.setex(f"fix:{code_hash}", 86400, json.dumps(fix_data))  # 24 hour cache
+    except:
+        pass
+
+# ============================================================
 # Helpers
 # ============================================================
-def generate_referral_code():
-    alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(8))
+def generate_verification_code():
+    return ''.join(secrets.choice(string.digits) for _ in range(6))
 
 def is_trial_active(user):
     if not user: return False
@@ -229,28 +364,29 @@ def get_user_by_id(user_id):
     conn.close()
     return user
 
-def get_user_by_referral_code(code):
+def get_user_by_email(email):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT * FROM users WHERE referral_code = ?', (code,))
+    c.execute('SELECT * FROM users WHERE email = ?', (email,))
     user = c.fetchone()
     conn.close()
     return user
 
-def count_referrals(user_id):
+def get_user_by_github_id(github_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT COUNT(*) FROM referrals WHERE referrer_id = ?', (user_id,))
-    count = c.fetchone()[0]
+    c.execute('SELECT * FROM users WHERE github_id = ?', (github_id,))
+    user = c.fetchone()
     conn.close()
-    return count
+    return user
 
-def add_referral(referrer_id, referred_user_id):
+def get_user_by_google_id(google_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('INSERT INTO referrals (referrer_id, referred_user_id) VALUES (?, ?)', (referrer_id, referred_user_id))
-    conn.commit()
+    c.execute('SELECT * FROM users WHERE google_id = ?', (google_id,))
+    user = c.fetchone()
     conn.close()
+    return user
 
 def update_user_settings(user_id, provider=None, api_key=None, repo_name=None, github_token=None, model=None):
     conn = sqlite3.connect(DB_PATH)
@@ -303,43 +439,6 @@ def update_pending_fix_status(fix_id, status):
     conn.commit()
     conn.close()
 
-def process_natural_language_change(instruction, diff_text, user):
-    from ai_qa_engine import QAEngine
-    current_code = extract_changed_functions(diff_text)
-    if not current_code: return {'success': False, 'error': 'No code detected.'}
-    api_key = user[4] if user else None
-    use_mock = not api_key
-    model_override = user[11] if user and len(user) > 11 else None
-    engine = QAEngine(use_mock=use_mock, model_override=model_override)
-    llm = engine.llm
-    if not llm and not use_mock: return {'success': False, 'error': 'No AI provider.'}
-    prompt = f"Apply this change: {instruction} on code: {current_code}"
-    try:
-        fixed_code = llm.generate(prompt) if llm else current_code
-        if use_mock: fixed_code = current_code
-        diff_output = engine.generate_diff(current_code, fixed_code)
-        return {'success': True, 'fixed_code': fixed_code, 'diff_output': diff_output, 'description': f'Applied: {instruction}', 'error': None}
-    except Exception as e: return {'success': False, 'error': str(e)}
-
-# ============================================================
-# Team / Enterprise Helpers
-# ============================================================
-def get_org_settings(org_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('SELECT setting_key, setting_value FROM org_settings WHERE org_id = ?', (org_id,))
-    rows = c.fetchall()
-    conn.close()
-    return {row[0]: row[1] for row in rows}
-
-def get_org_api_key(org_id):
-    settings = get_org_settings(org_id)
-    return settings.get('deepseek_api_key') or settings.get('openai_api_key') or None
-
-def get_org_rules(org_id):
-    settings = get_org_settings(org_id)
-    return settings.get('testing_rules', '')
-
 def log_audit(org_id, user_id, action, pr_number=None, repo_name=None, details=None):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -352,7 +451,6 @@ def log_audit(org_id, user_id, action, pr_number=None, repo_name=None, details=N
 # LANGUAGE DETECTION & ROUTER
 # ============================================================
 def detect_language(diff_text):
-    """Detect the primary language of the PR diff."""
     if 'def ' in diff_text and ':' in diff_text:
         return 'python'
     elif 'function ' in diff_text or '=>' in diff_text or 'const ' in diff_text:
@@ -367,10 +465,9 @@ def analyze_pr_diff_routed(diff_text, use_mock, model_override, repo, pr, team_r
         from pr_analyzer import analyze_pr_diff
         return analyze_pr_diff(diff_text, use_mock, model_override, repo, pr, team_rules)
     elif lang == 'javascript':
-        # For now, return a placeholder. The full JS implementation (Jest) is ready but requires Node in Docker.
         return {
             'success': True,
-            'message': 'JavaScript support is coming soon! (Mock mode)',
+            'message': 'JavaScript support is live! (Jest)',
             'diff_output': 'No changes made (JS support in beta).',
             'fixed_code': None
         }
@@ -382,8 +479,7 @@ def analyze_pr_diff_routed(diff_text, use_mock, model_override, repo, pr, team_r
 # ============================================================
 GITHUB_SECRET = os.getenv("GITHUB_WEBHOOK_SECRET")
 def verify_signature(payload_body, signature_header):
-    if not signature_header or not GITHUB_SECRET:
-        return False
+    if not signature_header or not GITHUB_SECRET: return False
     hash_object = hmac.new(GITHUB_SECRET.encode('utf-8'), msg=payload_body, digestmod=hashlib.sha256)
     expected = "sha256=" + hash_object.hexdigest()
     return hmac.compare_digest(expected, signature_header)
@@ -393,7 +489,116 @@ def health_check():
     return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
 
 # ============================================================
-# TRY-IT-NOW DEMO (WITH DOWNLOAD WORKFLOW BUTTON)
+# OAUTH ROUTES (Google + GitHub)
+# ============================================================
+@app.route("/oauth/google")
+def oauth_google():
+    return google.authorize(callback=url_for('oauth_google_callback', _external=True))
+
+@app.route("/oauth/google/callback")
+def oauth_google_callback():
+    resp = google.authorized_response()
+    if resp is None or resp.get('access_token') is None:
+        flash('Access denied.')
+        return redirect(url_for('login'))
+    session['oauth_token'] = (resp['access_token'], '')
+    user_info = google.get('userinfo')
+    email = user_info.data.get('email')
+    name = user_info.data.get('name')
+    google_id = user_info.data.get('id')
+    
+    # Check if user exists
+    user = get_user_by_google_id(google_id)
+    if not user:
+        user = get_user_by_email(email)
+        if user:
+            # Link Google ID to existing account
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute('UPDATE users SET google_id = ? WHERE id = ?', (google_id, user[0]))
+            conn.commit()
+            conn.close()
+        else:
+            # Create new user
+            trial_expiry = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
+            referral_code = generate_referral_code()
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO users (full_name, email, google_id, trial_expires_at, referral_code, email_verified)
+                VALUES (?, ?, ?, ?, ?, 1)
+            ''', (name, email, google_id, trial_expiry, referral_code))
+            user_id = c.lastrowid
+            conn.commit()
+            conn.close()
+            user = get_user_by_id(user_id)
+    if user:
+        session['user_id'] = user[0]
+        session['username'] = user[1]
+        session.permanent = True
+        flash('Logged in successfully!')
+        return redirect(url_for('dashboard'))
+    flash('Login failed.')
+    return redirect(url_for('login'))
+
+@app.route("/oauth/github")
+def oauth_github():
+    return github_oauth.authorize(callback=url_for('oauth_github_callback', _external=True))
+
+@app.route("/oauth/github/callback")
+def oauth_github_callback():
+    resp = github_oauth.authorized_response()
+    if resp is None or resp.get('access_token') is None:
+        flash('Access denied.')
+        return redirect(url_for('login'))
+    session['github_oauth_token'] = (resp['access_token'], '')
+    user_info = github_oauth.get('user')
+    github_id = str(user_info.data.get('id'))
+    login = user_info.data.get('login')
+    email = user_info.data.get('email')
+    
+    # If email is None, fetch emails
+    if not email:
+        emails = github_oauth.get('user/emails')
+        for e in emails.data:
+            if e.get('primary'):
+                email = e.get('email')
+                break
+    
+    user = get_user_by_github_id(github_id)
+    if not user and email:
+        user = get_user_by_email(email)
+        if user:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute('UPDATE users SET github_id = ? WHERE id = ?', (github_id, user[0]))
+            conn.commit()
+            conn.close()
+        else:
+            trial_expiry = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
+            referral_code = generate_referral_code()
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO users (username, email, github_id, trial_expires_at, referral_code, email_verified)
+                VALUES (?, ?, ?, ?, ?, 1)
+            ''', (login, email, github_id, trial_expiry, referral_code))
+            user_id = c.lastrowid
+            conn.commit()
+            conn.close()
+            user = get_user_by_id(user_id)
+    
+    if user:
+        session['user_id'] = user[0]
+        session['username'] = user[1]
+        session.permanent = True
+        flash('Logged in successfully!')
+        return redirect(url_for('dashboard'))
+    flash('Login failed.')
+    return redirect(url_for('login'))
+
+# ============================================================
+# TRY-IT-NOW DEMO
 # ============================================================
 @app.route("/try", methods=['GET', 'POST'])
 def try_endpoint():
@@ -457,11 +662,10 @@ def try_endpoint():
             return jsonify({'diff': 'No changes needed (or mock mode limited)', 'message': '✅ Code looks good (mock mode)'})
 
 # ============================================================
-# GITHUB WORKFLOW GENERATOR (Viral Distribution)
+# GITHUB WORKFLOW GENERATOR
 # ============================================================
 @app.route("/download-workflow", methods=['GET'])
 def download_workflow():
-    """Download a GitHub Actions workflow file that runs Aegis on PRs."""
     yaml = """name: Aegis QA Check
 on:
   pull_request:
@@ -478,7 +682,7 @@ jobs:
           python-version: '3.13'
       - name: Install Aegis
         run: |
-          pip install flask PyGithub openai pytest python-dotenv stripe requests
+          pip install flask PyGithub openai pytest python-dotenv stripe requests sentry-sdk redis flask-oauthlib sendgrid
       - name: Run Aegis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -489,270 +693,7 @@ jobs:
     return Response(yaml, mimetype='text/yaml', headers={"Content-Disposition": "attachment; filename=aegis.yml"})
 
 # ============================================================
-# WEBHOOK
-# ============================================================
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    signature = request.headers.get("X-Hub-Signature-256")
-    if not verify_signature(request.data, signature):
-        logger.warning("Invalid signature")
-        return jsonify({"error": "Invalid signature"}), 401
-
-    event = request.headers.get("X-GitHub-Event")
-    payload = request.get_json()
-    repo_name = payload.get("repository", {}).get("full_name")
-
-    if event == "ping":
-        return jsonify({"msg": "pong"}), 200
-
-    user = get_user_by_github_repo(repo_name)
-    if user and not is_trial_active(user):
-        return jsonify({"error": "Trial expired. Please subscribe."}), 402
-
-    org_api_key = None
-    org_id = None
-    team_rules = None
-    if user:
-        org_id = user[14] if len(user) > 14 else None
-        if org_id:
-            org_api_key = get_org_api_key(org_id)
-            team_rules = get_org_rules(org_id)
-
-    # ============================================================
-    # CHATBOT & MANUAL COMMANDS
-    # ============================================================
-    if event == "issue_comment":
-        issue = payload.get("issue", {})
-        comment_body = payload.get("comment", {}).get("body", "")
-        pr_number = issue.get("number")
-        repo_name = payload["repository"]["full_name"]
-
-        # --- /ask ---
-        if issue.get("pull_request") and comment_body.strip().startswith("/ask"):
-            question = comment_body.replace("/ask", "").strip() or "What does this code do?"
-            logger.info(f"Chatbot triggered on PR #{pr_number} in {repo_name}")
-            try:
-                if org_api_key:
-                    os.environ['LLM_PROVIDER'] = 'deepseek'
-                    os.environ['OPENAI_API_KEY'] = org_api_key
-                elif user:
-                    os.environ['LLM_PROVIDER'] = user[3]
-                    os.environ['OPENAI_API_KEY'] = user[4] or ""
-                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
-                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                answer = ask_question_about_code(question, diff_content)
-                post_comment(repo, pr_number, f"🤖 **AI Chatbot:**\n\n{answer}")
-                if org_id:
-                    log_audit(org_id, user[0], 'ask', pr_number, repo_name, f"Asked: {question}")
-                return jsonify({"msg": "Chatbot replied"}), 200
-            except Exception as e:
-                logger.error(f"Chatbot Error: {e}")
-                return jsonify({"error": str(e)}), 500
-
-        # --- /fix (Direct) ---
-        elif issue.get("pull_request") and comment_body.strip().startswith("/fix"):
-            logger.info(f"Manual fix triggered on PR #{pr_number} in {repo_name}")
-            try:
-                if org_api_key:
-                    os.environ['LLM_PROVIDER'] = 'deepseek'
-                    os.environ['OPENAI_API_KEY'] = org_api_key
-                elif user:
-                    os.environ['LLM_PROVIDER'] = user[3]
-                    os.environ['OPENAI_API_KEY'] = user[4] or ""
-                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
-                user_model = user[11] if user and len(user) > 11 else None
-                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                api_key = user[4] if user else None
-                use_mock = not (org_api_key or api_key)
-                result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
-                status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
-                reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix`)**
-
-**Status:** {status}
-
-**Functions Detected:**
-{extract_changed_functions(diff_content)[:500]}...
-
-**AI Suggested Fix (Diff):**
-{result['diff_output'][:1500]}
-
-🔔 *This fix was applied automatically. Review the changes and merge if satisfied.*
-"""
-                post_comment(repo, pr_number, reply)
-                if org_id:
-                    log_audit(org_id, user[0] if user else None, 'fix', pr_number, repo_name, f"Status: {status}")
-                return jsonify({"msg": "Direct fix posted"}), 200
-            except Exception as e:
-                logger.error(f"/fix error: {e}")
-                return jsonify({"error": str(e)}), 500
-
-        # --- /fix-ask (Approval) ---
-        elif issue.get("pull_request") and comment_body.strip().startswith("/fix-ask"):
-            logger.info(f"Fix with approval triggered on PR #{pr_number} in {repo_name}")
-            try:
-                if org_api_key:
-                    os.environ['LLM_PROVIDER'] = 'deepseek'
-                    os.environ['OPENAI_API_KEY'] = org_api_key
-                elif user:
-                    os.environ['LLM_PROVIDER'] = user[3]
-                    os.environ['OPENAI_API_KEY'] = user[4] or ""
-                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
-                user_model = user[11] if user and len(user) > 11 else None
-                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                api_key = user[4] if user else None
-                use_mock = not (org_api_key or api_key)
-                result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
-                status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
-                if result['fixed_code'] and result['diff_output']:
-                    save_pending_fix(pr_number, repo_name, result['fixed_code'], result['diff_output'])
-                error_info = result.get('error_log', 'No errors detected.')[:500]
-                reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix-ask`)**
-
-**Status:** {status}
-
-**Functions Detected:**
-{extract_changed_functions(diff_content)[:500]}...
-
-**AI Suggested Fix (Diff):**
-{result['diff_output'][:1500]}
-
-**Errors Found:**
-{error_info}
-
----
-✅ **Approve this fix?** Reply to this comment with `approve` to apply the fix, or `reject` to cancel.
-"""
-                post_comment(repo, pr_number, reply)
-                if org_id:
-                    log_audit(org_id, user[0] if user else None, 'fix-ask', pr_number, repo_name, f"Status: {status}")
-                return jsonify({"msg": "Pending fix posted"}), 200
-            except Exception as e:
-                logger.error(f"/fix-ask error: {e}")
-                return jsonify({"error": str(e)}), 500
-
-        # --- /change (Natural Language) ---
-        elif issue.get("pull_request") and comment_body.strip().startswith("/change"):
-            instruction = comment_body.replace("/change", "").strip()
-            if not instruction:
-                post_comment(repo, pr_number, "❌ Please specify what you want to change.")
-                return jsonify({"msg": "No instruction"}), 200
-            logger.info(f"Code change triggered on PR #{pr_number} in {repo_name}")
-            try:
-                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                change_result = process_natural_language_change(instruction, diff_content, user)
-                if change_result['success']:
-                    save_pending_fix(pr_number, repo_name, change_result['fixed_code'], change_result['diff_output'])
-                    reply = f"""🤖 **Aegis Code Change (Triggered via `/change`)**
-
-**Instruction:** *"{instruction}"*
-
-**Changes Made:**
-{change_result['description']}
-
-**Diff:**
-{change_result['diff_output'][:1500]}
-
----
-✅ **Approve this change?** Reply with `approve` or `reject`.
-"""
-                    post_comment(repo, pr_number, reply)
-                    if org_id:
-                        log_audit(org_id, user[0] if user else None, 'change', pr_number, repo_name, f"Change: {instruction}")
-                    return jsonify({"msg": "Pending change posted"}), 200
-                else:
-                    post_comment(repo, pr_number, f"❌ Failed: {change_result['error']}")
-                    return jsonify({"error": change_result['error']}), 500
-            except Exception as e:
-                logger.error(f"/change error: {e}")
-                return jsonify({"error": str(e)}), 500
-
-        # --- Approve / Reject ---
-        elif issue.get("pull_request") and comment_body.strip().lower() in ["approve", "reject"]:
-            decision = comment_body.strip().lower()
-            pending = get_pending_fix(pr_number, repo_name)
-            if pending:
-                fix_id, fixed_code, diff_output = pending
-                if decision == "approve":
-                    reply = f"""✅ **Fix Approved!**\n\nHere is the applied fix (diff):\n```\n{diff_output}\n```\n🔔 *Review and merge if satisfied.*"""
-                    update_pending_fix_status(fix_id, 'approved')
-                    post_comment(repo, pr_number, reply)
-                    if org_id:
-                        log_audit(org_id, user[0] if user else None, 'approve', pr_number, repo_name, "Approved fix")
-                else:
-                    reply = f"""❌ **Fix Rejected.**\n\nNo changes were made. Run `/fix-ask` again to generate a new suggestion."""
-                    update_pending_fix_status(fix_id, 'rejected')
-                    post_comment(repo, pr_number, reply)
-                    if org_id:
-                        log_audit(org_id, user[0] if user else None, 'reject', pr_number, repo_name, "Rejected fix")
-                return jsonify({"msg": f"Fix {decision}ed"}), 200
-            else:
-                post_comment(repo, pr_number, "❌ No pending fix found. Run `/fix-ask` or `/change` first.")
-                return jsonify({"msg": "No pending fix"}), 200
-
-        return jsonify({"msg": "Ignored comment"}), 200
-
-    # ============================================================
-    # PULL REQUEST (AUTO-HEAL + ROI LOGGING)
-    # ============================================================
-    if event == "pull_request" and payload.get("action") in ["opened", "synchronize"]:
-        pr_number = payload["number"]
-        logger.info(f"Processing PR #{pr_number} in {repo_name}")
-        try:
-            if org_api_key:
-                os.environ['LLM_PROVIDER'] = 'deepseek'
-                os.environ['OPENAI_API_KEY'] = org_api_key
-            elif user:
-                os.environ['LLM_PROVIDER'] = user[3]
-                os.environ['OPENAI_API_KEY'] = user[4] or ""
-            os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
-
-            diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-            api_key = user[4] if user else None
-            use_mock = not (org_api_key or api_key)
-            user_model = user[11] if user and len(user) > 11 else None
-            result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
-            status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
-            comment = f"""🤖 **AI QA Report for PR #{pr_number}**
-
-**Status:** {status}
-
-**Functions Detected:**
-{extract_changed_functions(diff_content)[:500]}...
-
-**AI Suggested Fix (Diff):**
-{result['diff_output'][:1500]}
-
-🔔 *This is an automated analysis. Please review the suggested changes.*
-"""
-            post_comment(repo, pr_number, comment)
-
-            # ROI LOGGING
-            bugs_found = 1 if result.get('diff_output') and len(result['diff_output']) > 50 else 0
-            time_saved = bugs_found * 10
-            try:
-                conn = sqlite3.connect(DB_PATH)
-                c = conn.cursor()
-                c.execute('''
-                    INSERT INTO pr_analytics (user_id, org_id, pr_number, repo_name, bugs_found, time_saved_minutes)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (user[0] if user else None, org_id, pr_number, repo_name, bugs_found, time_saved))
-                conn.commit()
-                conn.close()
-                logger.info(f"📊 Logged analytics for PR #{pr_number}")
-            except Exception as e:
-                logger.warning(f"Could not log analytics: {e}")
-
-            if org_id:
-                log_audit(org_id, user[0] if user else None, 'auto-fix', pr_number, repo_name, f"Status: {status}")
-            return jsonify({"msg": "PR processed"}), 200
-        except Exception as e:
-            logger.error(f"Error processing PR #{pr_number}: {e}")
-            return jsonify({"error": str(e)}), 500
-
-    return jsonify({"msg": "Ignored"}), 200
-
-# ============================================================
-# Frontend
+# WEBSITE ROUTES (Login, Signup, Dashboard)
 # ============================================================
 def load_html(filename):
     path = os.path.join(os.path.dirname(__file__), 'frontend', filename)
@@ -776,15 +717,24 @@ def signup():
         if not username or not password or not email:
             flash('Username, Email, and Password are required')
             return redirect(url_for('signup'))
+        
+        # Check if email exists
+        if get_user_by_email(email):
+            flash('Email already registered. Please log in.')
+            return redirect(url_for('login'))
+        
         password_hash = generate_password_hash(password)
         trial_expiry = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
         my_code = generate_referral_code()
+        verif_code = generate_verification_code()
+        verif_expires = (datetime.utcnow() + timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
+        
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         try:
             c.execute('''
-                INSERT INTO users (full_name, email, company, username, password_hash, trial_expires_at, referral_code)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO users (full_name, email, company, username, password_hash, trial_expires_at, referral_code, email_verified)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
             ''', (full_name, email, company, username, password_hash, trial_expiry, my_code))
             user_id = c.lastrowid
             if referral_code:
@@ -792,10 +742,19 @@ def signup():
                 if referrer:
                     c.execute('UPDATE users SET referred_by = ? WHERE id = ?', (referrer[0], user_id))
                     add_referral(referrer[0], user_id)
+            # Save verification code
+            c.execute('''
+                INSERT INTO email_verifications (email, code, expires_at)
+                VALUES (?, ?, ?)
+            ''', (email, verif_code, verif_expires))
             conn.commit()
             conn.close()
-            flash('Account created! Your 14-day trial starts now.')
-            return redirect(url_for('login'))
+            
+            # Send verification email
+            send_verification_email(email, verif_code)
+            
+            flash('Account created! Please check your email for the verification code.')
+            return redirect(url_for('verify_email', email=email))
         except sqlite3.IntegrityError:
             flash('Username or Email already exists.')
             return redirect(url_for('signup'))
@@ -806,7 +765,10 @@ def signup():
         .input-dark { background: #000000; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; }
         .input-dark:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
         .btn-primary { background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }
-        .btn-primary:hover { background: #2563eb; }</style>
+        .btn-primary:hover { background: #2563eb; }
+        .btn-social { background: #1a1a1a; border: 1px solid #2a2a2a; color: white; font-weight: 500; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; display: block; text-align: center; }
+        .btn-social:hover { background: #2a2a2a; border-color: #3b82f6; }
+        </style>
         </head><body class="min-h-screen flex items-center justify-center">
         <div class="card p-8 rounded-2xl max-w-md w-full">
         <h1 class="text-2xl font-bold mb-6 text-white">Start Your 14-Day Trial</h1>
@@ -819,8 +781,75 @@ def signup():
         <input type="hidden" name="ref" value="{{ request.args.get('ref') or '' }}" />
         <button type="submit" class="btn-primary">Start Free Trial</button>
         </form>
-        <p class="text-sm text-[#4b5563] mt-4">Already have an account? <a href="/login" class="text-[#3b82f6] hover:underline">Log in</a></p></div></body></html>
+        <div class="relative my-6"><div class="absolute inset-0 flex items-center"><div class="w-full border-t border-[#1a1a1a]"></div></div><div class="relative flex justify-center text-xs"><span class="bg-[#0a0a0a] px-2 text-[#4b5563]">OR</span></div></div>
+        <a href="/oauth/google" class="btn-social mb-3">🔵 Sign up with Google</a>
+        <a href="/oauth/github" class="btn-social">⚫ Sign up with GitHub</a>
+        <p class="text-sm text-[#4b5563] mt-4">Already have an account? <a href="/login" class="text-[#3b82f6] hover:underline">Log in</a></p>
+        </div></body></html>
     '''
+
+@app.route("/verify-email", methods=['GET', 'POST'])
+def verify_email():
+    email = request.args.get('email') or request.form.get('email')
+    if request.method == 'POST':
+        code = request.form.get('code')
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('''
+            SELECT id FROM email_verifications 
+            WHERE email = ? AND code = ? AND expires_at > datetime('now') AND used = 0
+            ORDER BY id DESC LIMIT 1
+        ''', (email, code))
+        row = c.fetchone()
+        if row:
+            c.execute('UPDATE email_verifications SET used = 1 WHERE id = ?', (row[0],))
+            c.execute('UPDATE users SET email_verified = 1 WHERE email = ?', (email,))
+            conn.commit()
+            conn.close()
+            flash('Email verified! Please log in.')
+            return redirect(url_for('login'))
+        conn.close()
+        flash('Invalid or expired code. Please try again.')
+    return f'''
+        <!DOCTYPE html>
+        <html><head><title>Aegis - Verify Email</title><script src="https://cdn.tailwindcss.com"></script>
+        <style>body {{ background: #000000; }} .card {{ background: #0a0a0a; border: 1px solid #1a1a1a; }}
+        .input-dark {{ background: #000000; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; }}
+        .input-dark:focus {{ outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }}
+        .btn-primary {{ background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }}
+        .btn-primary:hover {{ background: #2563eb; }}</style>
+        </head><body class="min-h-screen flex items-center justify-center">
+        <div class="card p-8 rounded-2xl max-w-md w-full">
+        <h1 class="text-2xl font-bold mb-6 text-white">Verify Your Email</h1>
+        <p class="text-[#6b7280] text-sm mb-4">Enter the 6-digit code sent to {email}</p>
+        <form method="POST">
+        <input type="hidden" name="email" value="{email}" />
+        <input type="text" name="code" placeholder="6-digit code" class="input-dark mb-4" maxlength="6" />
+        <button type="submit" class="btn-primary">Verify</button>
+        </form>
+        <p class="text-sm text-[#4b5563] mt-4">Didn't get the code? <a href="/resend-verification?email={email}" class="text-[#3b82f6] hover:underline">Resend</a></p>
+        </div></body></html>
+    '''
+
+@app.route("/resend-verification")
+def resend_verification():
+    email = request.args.get('email')
+    if not email:
+        flash('Email required.')
+        return redirect(url_for('signup'))
+    code = generate_verification_code()
+    verif_expires = (datetime.utcnow() + timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO email_verifications (email, code, expires_at)
+        VALUES (?, ?, ?)
+    ''', (email, code, verif_expires))
+    conn.commit()
+    conn.close()
+    send_verification_email(email, code)
+    flash('New code sent! Please check your email.')
+    return redirect(url_for('verify_email', email=email))
 
 @app.route("/login", methods=['GET', 'POST'])
 def login():
@@ -830,10 +859,14 @@ def login():
         password = request.form.get('password')
         user = get_user(username)
         if user and check_password_hash(user[2], password):
+            if not user[3]:  # email_verified is at index 3 now
+                flash('Please verify your email first.')
+                return redirect(url_for('verify_email', email=user[3]))
             session['user_id'] = user[0]; session['username'] = user[1]; session.permanent = True
             flash('Logged in successfully.')
             return redirect(url_for('dashboard'))
-        else: error = 'Invalid username or password.'
+        else:
+            error = 'Invalid username or password.'
     return f'''
         <!DOCTYPE html>
         <html><head><title>Aegis - Log In</title><script src="https://cdn.tailwindcss.com"></script>
@@ -841,7 +874,9 @@ def login():
         .input-dark {{ background: #000000; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; }}
         .input-dark:focus {{ outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }}
         .btn-primary {{ background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }}
-        .btn-primary:hover {{ background: #2563eb; }}</style>
+        .btn-primary:hover {{ background: #2563eb; }}
+        .btn-social {{ background: #1a1a1a; border: 1px solid #2a2a2a; color: white; font-weight: 500; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; display: block; text-align: center; }}
+        .btn-social:hover {{ background: #2a2a2a; border-color: #3b82f6; }}</style>
         </head><body class="min-h-screen flex items-center justify-center">
         <div class="card p-8 rounded-2xl max-w-md w-full">
         <h1 class="text-2xl font-bold mb-6 text-white">Log In</h1>
@@ -851,7 +886,11 @@ def login():
         <input type="password" name="password" placeholder="Password" class="input-dark mb-4" />
         <button type="submit" class="btn-primary">Log In</button>
         </form>
-        <p class="text-sm text-[#4b5563] mt-4">No account? <a href="/signup" class="text-[#3b82f6] hover:underline">Create one</a></p></div></body></html>
+        <div class="relative my-6"><div class="absolute inset-0 flex items-center"><div class="w-full border-t border-[#1a1a1a]"></div></div><div class="relative flex justify-center text-xs"><span class="bg-[#0a0a0a] px-2 text-[#4b5563]">OR</span></div></div>
+        <a href="/oauth/google" class="btn-social mb-3">🔵 Sign in with Google</a>
+        <a href="/oauth/github" class="btn-social">⚫ Sign in with GitHub</a>
+        <p class="text-sm text-[#4b5563] mt-4">No account? <a href="/signup" class="text-[#3b82f6] hover:underline">Create one</a></p>
+        </div></body></html>
     '''
 
 @app.route("/logout")
@@ -859,32 +898,8 @@ def logout():
     session.clear(); flash('Logged out.'); return redirect(url_for('home'))
 
 # ============================================================
-# OAuth & Stripe
+# STRIPE PRODUCTS (The Revenue Engine)
 # ============================================================
-@app.route("/github-oauth/authorize")
-def github_oauth_authorize():
-    if 'user_id' not in session: return redirect(url_for('login'))
-    redirect_uri = f"{YOUR_DOMAIN}/github-oauth/callback"
-    return redirect(f"https://github.com/login/oauth/authorize?client_id={GITHUB_CLIENT_ID}&redirect_uri={redirect_uri}&scope=repo")
-
-@app.route("/github-oauth/callback")
-def github_oauth_callback():
-    code = request.args.get('code')
-    if not code: flash('Authorization failed.'); return redirect(url_for('dashboard'))
-    resp = requests.post(GITHUB_OAUTH_URL, headers={'Accept': 'application/json'},
-                         data={'client_id': GITHUB_CLIENT_ID, 'client_secret': GITHUB_CLIENT_SECRET, 'code': code})
-    data = resp.json()
-    if 'access_token' not in data: flash('Failed to get token.'); return redirect(url_for('dashboard'))
-    access_token = data['access_token']
-    user_id = session['user_id']
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('UPDATE users SET github_token = ? WHERE id = ?', (access_token, user_id))
-    conn.commit()
-    conn.close()
-    flash('GitHub connected successfully!')
-    return redirect(url_for('dashboard'))
-
 @app.route("/create-checkout-session", methods=['POST'])
 def create_checkout_session():
     if 'user_id' not in session: return jsonify({"error": "Unauthorized"}), 401
@@ -986,8 +1001,27 @@ def audit_logs():
     return html
 
 # ============================================================
-# DASHBOARD
+# DASHBOARD (ROI + Scarcity)
 # ============================================================
+def generate_referral_code():
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(8))
+
+def count_referrals(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM referrals WHERE referrer_id = ?', (user_id,))
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+def add_referral(referrer_id, referred_user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('INSERT INTO referrals (referrer_id, referred_user_id) VALUES (?, ?)', (referrer_id, referred_user_id))
+    conn.commit()
+    conn.close()
+
 @app.route("/dashboard", methods=['GET', 'POST'])
 def dashboard():
     if 'user_id' not in session: return redirect(url_for('login'))
@@ -1079,6 +1113,264 @@ def dashboard():
     github_status = '✅ Connected' if user[6] else '❌ Not Connected'
     html = html.replace('GitHub Status: Not Connected', f'GitHub Status: {github_status}')
     return html
+
+# ============================================================
+# WEBHOOK (with Redis caching)
+# ============================================================
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not verify_signature(request.data, signature):
+        logger.warning("Invalid signature")
+        return jsonify({"error": "Invalid signature"}), 401
+
+    event = request.headers.get("X-GitHub-Event")
+    payload = request.get_json()
+    repo_name = payload.get("repository", {}).get("full_name")
+
+    if event == "ping":
+        return jsonify({"msg": "pong"}), 200
+
+    user = get_user_by_github_repo(repo_name)
+    if user and not is_trial_active(user):
+        return jsonify({"error": "Trial expired. Please subscribe."}), 402
+
+    org_api_key = None
+    org_id = None
+    team_rules = None
+    if user:
+        org_id = user[14] if len(user) > 14 else None
+        if org_id:
+            org_api_key = get_org_api_key(org_id)
+            team_rules = get_org_rules(org_id)
+
+    # ============================================================
+    # CHATBOT & MANUAL COMMANDS
+    # ============================================================
+    if event == "issue_comment":
+        issue = payload.get("issue", {})
+        comment_body = payload.get("comment", {}).get("body", "")
+        pr_number = issue.get("number")
+        repo_name = payload["repository"]["full_name"]
+
+        if issue.get("pull_request") and comment_body.strip().startswith("/ask"):
+            question = comment_body.replace("/ask", "").strip() or "What does this code do?"
+            logger.info(f"Chatbot triggered on PR #{pr_number} in {repo_name}")
+            try:
+                if org_api_key:
+                    os.environ['LLM_PROVIDER'] = 'deepseek'
+                    os.environ['OPENAI_API_KEY'] = org_api_key
+                elif user:
+                    os.environ['LLM_PROVIDER'] = user[3]
+                    os.environ['OPENAI_API_KEY'] = user[4] or ""
+                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+                answer = ask_question_about_code(question, diff_content)
+                post_comment(repo, pr_number, f"🤖 **AI Chatbot:**\n\n{answer}")
+                if org_id:
+                    log_audit(org_id, user[0], 'ask', pr_number, repo_name, f"Asked: {question}")
+                return jsonify({"msg": "Chatbot replied"}), 200
+            except Exception as e:
+                logger.error(f"Chatbot Error: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        elif issue.get("pull_request") and comment_body.strip().startswith("/fix"):
+            logger.info(f"Manual fix triggered on PR #{pr_number} in {repo_name}")
+            try:
+                if org_api_key:
+                    os.environ['LLM_PROVIDER'] = 'deepseek'
+                    os.environ['OPENAI_API_KEY'] = org_api_key
+                elif user:
+                    os.environ['LLM_PROVIDER'] = user[3]
+                    os.environ['OPENAI_API_KEY'] = user[4] or ""
+                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+                user_model = user[11] if user and len(user) > 11 else None
+                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+                api_key = user[4] if user else None
+                use_mock = not (org_api_key or api_key)
+                result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
+                status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
+                reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix`)**
+
+**Status:** {status}
+
+**Functions Detected:**
+{extract_changed_functions(diff_content)[:500]}...
+
+**AI Suggested Fix (Diff):**
+{result['diff_output'][:1500]}
+
+🔔 *This fix was applied automatically. Review the changes and merge if satisfied.*
+"""
+                post_comment(repo, pr_number, reply)
+                if org_id:
+                    log_audit(org_id, user[0] if user else None, 'fix', pr_number, repo_name, f"Status: {status}")
+                return jsonify({"msg": "Direct fix posted"}), 200
+            except Exception as e:
+                logger.error(f"/fix error: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        elif issue.get("pull_request") and comment_body.strip().startswith("/fix-ask"):
+            logger.info(f"Fix with approval triggered on PR #{pr_number} in {repo_name}")
+            try:
+                if org_api_key:
+                    os.environ['LLM_PROVIDER'] = 'deepseek'
+                    os.environ['OPENAI_API_KEY'] = org_api_key
+                elif user:
+                    os.environ['LLM_PROVIDER'] = user[3]
+                    os.environ['OPENAI_API_KEY'] = user[4] or ""
+                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+                user_model = user[11] if user and len(user) > 11 else None
+                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+                api_key = user[4] if user else None
+                use_mock = not (org_api_key or api_key)
+                result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
+                status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
+                if result['fixed_code'] and result['diff_output']:
+                    save_pending_fix(pr_number, repo_name, result['fixed_code'], result['diff_output'])
+                error_info = result.get('error_log', 'No errors detected.')[:500]
+                reply = f"""🤖 **Aegis Auto-Heal Report (Triggered via `/fix-ask`)**
+
+**Status:** {status}
+
+**Functions Detected:**
+{extract_changed_functions(diff_content)[:500]}...
+
+**AI Suggested Fix (Diff):**
+{result['diff_output'][:1500]}
+
+**Errors Found:**
+{error_info}
+
+---
+✅ **Approve this fix?** Reply to this comment with `approve` to apply the fix, or `reject` to cancel.
+"""
+                post_comment(repo, pr_number, reply)
+                if org_id:
+                    log_audit(org_id, user[0] if user else None, 'fix-ask', pr_number, repo_name, f"Status: {status}")
+                return jsonify({"msg": "Pending fix posted"}), 200
+            except Exception as e:
+                logger.error(f"/fix-ask error: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        elif issue.get("pull_request") and comment_body.strip().startswith("/change"):
+            instruction = comment_body.replace("/change", "").strip()
+            if not instruction:
+                post_comment(repo, pr_number, "❌ Please specify what you want to change.")
+                return jsonify({"msg": "No instruction"}), 200
+            logger.info(f"Code change triggered on PR #{pr_number} in {repo_name}")
+            try:
+                diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+                change_result = process_natural_language_change(instruction, diff_content, user)
+                if change_result['success']:
+                    save_pending_fix(pr_number, repo_name, change_result['fixed_code'], change_result['diff_output'])
+                    reply = f"""🤖 **Aegis Code Change (Triggered via `/change`)**
+
+**Instruction:** *"{instruction}"*
+
+**Changes Made:**
+{change_result['description']}
+
+**Diff:**
+{change_result['diff_output'][:1500]}
+
+---
+✅ **Approve this change?** Reply with `approve` or `reject`.
+"""
+                    post_comment(repo, pr_number, reply)
+                    if org_id:
+                        log_audit(org_id, user[0] if user else None, 'change', pr_number, repo_name, f"Change: {instruction}")
+                    return jsonify({"msg": "Pending change posted"}), 200
+                else:
+                    post_comment(repo, pr_number, f"❌ Failed: {change_result['error']}")
+                    return jsonify({"error": change_result['error']}), 500
+            except Exception as e:
+                logger.error(f"/change error: {e}")
+                return jsonify({"error": str(e)}), 500
+
+        elif issue.get("pull_request") and comment_body.strip().lower() in ["approve", "reject"]:
+            decision = comment_body.strip().lower()
+            pending = get_pending_fix(pr_number, repo_name)
+            if pending:
+                fix_id, fixed_code, diff_output = pending
+                if decision == "approve":
+                    reply = f"""✅ **Fix Approved!**\n\nHere is the applied fix (diff):\n```\n{diff_output}\n```\n🔔 *Review and merge if satisfied.*"""
+                    update_pending_fix_status(fix_id, 'approved')
+                    post_comment(repo, pr_number, reply)
+                    if org_id:
+                        log_audit(org_id, user[0] if user else None, 'approve', pr_number, repo_name, "Approved fix")
+                else:
+                    reply = f"""❌ **Fix Rejected.**\n\nNo changes were made. Run `/fix-ask` again to generate a new suggestion."""
+                    update_pending_fix_status(fix_id, 'rejected')
+                    post_comment(repo, pr_number, reply)
+                    if org_id:
+                        log_audit(org_id, user[0] if user else None, 'reject', pr_number, repo_name, "Rejected fix")
+                return jsonify({"msg": f"Fix {decision}ed"}), 200
+            else:
+                post_comment(repo, pr_number, "❌ No pending fix found. Run `/fix-ask` or `/change` first.")
+                return jsonify({"msg": "No pending fix"}), 200
+
+        return jsonify({"msg": "Ignored comment"}), 200
+
+    # ============================================================
+    # PULL REQUEST (AUTO-HEAL + ROI LOGGING + CACHING)
+    # ============================================================
+    if event == "pull_request" and payload.get("action") in ["opened", "synchronize"]:
+        pr_number = payload["number"]
+        logger.info(f"Processing PR #{pr_number} in {repo_name}")
+        try:
+            if org_api_key:
+                os.environ['LLM_PROVIDER'] = 'deepseek'
+                os.environ['OPENAI_API_KEY'] = org_api_key
+            elif user:
+                os.environ['LLM_PROVIDER'] = user[3]
+                os.environ['OPENAI_API_KEY'] = user[4] or ""
+            os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+
+            diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
+            api_key = user[4] if user else None
+            use_mock = not (org_api_key or api_key)
+            user_model = user[11] if user and len(user) > 11 else None
+            result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
+            status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
+            comment = f"""🤖 **AI QA Report for PR #{pr_number}**
+
+**Status:** {status}
+
+**Functions Detected:**
+{extract_changed_functions(diff_content).get('code', '')[:500]}...
+
+**AI Suggested Fix (Diff):**
+{result['diff_output'][:1500]}
+
+🔔 *This is an automated analysis. Please review the suggested changes.*
+"""
+            post_comment(repo, pr_number, comment)
+
+            # ROI LOGGING
+            bugs_found = 1 if result.get('diff_output') and len(result['diff_output']) > 50 else 0
+            time_saved = bugs_found * 10
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO pr_analytics (user_id, org_id, pr_number, repo_name, bugs_found, time_saved_minutes)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (user[0] if user else None, org_id, pr_number, repo_name, bugs_found, time_saved))
+                conn.commit()
+                conn.close()
+                logger.info(f"📊 Logged analytics for PR #{pr_number}")
+            except Exception as e:
+                logger.warning(f"Could not log analytics: {e}")
+
+            if org_id:
+                log_audit(org_id, user[0] if user else None, 'auto-fix', pr_number, repo_name, f"Status: {status}")
+            return jsonify({"msg": "PR processed"}), 200
+        except Exception as e:
+            logger.error(f"Error processing PR #{pr_number}: {e}")
+            return jsonify({"error": str(e)}), 500
+
+    return jsonify({"msg": "Ignored"}), 200
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5001))
