@@ -1,60 +1,9 @@
 import re
 import logging
 import base64
-import json
 from ai_qa_engine import QAEngine
 
 logger = logging.getLogger(__name__)
-
-# ================================================================
-# 1. HELPERS
-# ================================================================
-
-def get_import_context(full_content: str) -> dict:
-    import_lines = [line for line in full_content.splitlines() if line.startswith(('import ', 'from '))]
-    import_map = {}
-    for line in import_lines:
-        if line.startswith('from '):
-            parts = line.split(' import ')
-            if len(parts) == 2:
-                module = parts[0].replace('from ', '').strip()
-                imported = parts[1].strip().split(',')
-                for item in imported:
-                    clean_item = item.strip()
-                    if ' as ' in clean_item:
-                        alias_parts = clean_item.split(' as ')
-                        import_map[alias_parts[1].strip()] = f"{module}.{alias_parts[0].strip()}"
-                    else:
-                        import_map[clean_item] = f"{module}.{clean_item}"
-        elif line.startswith('import '):
-            parts = line.replace('import ', '').split(' as ')
-            if len(parts) == 2:
-                import_map[parts[1].strip()] = parts[0].strip()
-            else:
-                for item in parts:
-                    clean_item = item.strip().split('.')[0]
-                    import_map[clean_item] = clean_item
-    return import_map
-
-def extract_local_function_signatures(full_content: str, called_funcs: list) -> str:
-    if not called_funcs:
-        return ""
-    signatures = []
-    skip_list = {'len', 'print', 'range', 'str', 'int', 'float', 'bool', 'list', 'dict', 'set', 'tuple',
-                 'sum', 'max', 'min', 'abs', 'sorted', 'enumerate', 'zip', 'map', 'filter', 'any', 'all'}
-    for func in set(called_funcs):
-        if func in skip_list or func.startswith('_'):
-            continue
-        pattern = rf'def\s+{func}\s*\([^)]*\)\s*->?\s*[^:]*:'
-        match = re.search(pattern, full_content)
-        if match:
-            signatures.append(match.group(0))
-        else:
-            pattern2 = rf'async\s+def\s+{func}\s*\([^)]*\)\s*->?\s*[^:]*:'
-            match2 = re.search(pattern2, full_content)
-            if match2:
-                signatures.append(match2.group(0))
-    return '\n'.join(signatures)
 
 def extract_changed_functions(diff_text: str) -> dict:
     lines = diff_text.splitlines()
@@ -140,10 +89,6 @@ def is_migration_file(file_path):
             return True
     return False
 
-# ================================================================
-# 2. MAIN ANALYZER (PROPERLY INDENTED)
-# ================================================================
-
 def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str = None, repo=None, pr=None, team_rules: str = None) -> dict:
     extracted = extract_changed_functions(diff_text)
     code_snippet = extracted['code']
@@ -164,7 +109,7 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
                     'fixed_code': None
                 }
 
-    # Fetch full file content
+    # Fetch full file content for context
     full_content = None
     imports = []
     import_map = {}
@@ -178,16 +123,16 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
                 if full_content:
                     import_lines = [line for line in full_content.splitlines() if line.startswith(('import ', 'from '))]
                     imports = import_lines[:5]
-                    import_map = get_import_context(full_content)
                 break
 
     # Local function signatures
     if full_content:
         call_pattern = r'(\w+)\('
         called_funcs = re.findall(call_pattern, code_snippet)
-        local_sigs = extract_local_function_signatures(full_content, called_funcs)
+        # We'll just pass the code snippet directly; the engine will generate tests.
+        # The additional context is not injected into the prompt here, but we can later enhance.
 
-    # Impact radius
+    # Impact radius (for informational purposes)
     if repo and pr and func_name:
         impact_radius = scan_impact_radius(repo, func_name, pr.head.ref)
 
@@ -195,80 +140,13 @@ def analyze_pr_diff(diff_text: str, use_mock: bool = True, model_override: str =
     engine = QAEngine(use_mock=use_mock, model_override=model_override)
     engine.load_code_from_string(code_snippet)
 
-    # ================================================================
-    # 3. DEFINE THE CUSTOM TEST GENERATOR (INSIDE analyze_pr_diff)
-    #    INDENTED WITH 4 SPACES – PERFECT SYNTAX
-    # ================================================================
-    def generate_test_func(code_snippet):
-        if use_mock:
-            return """
-import pytest
-from buggy_code import calculate_discount
-def test_discount_edge_cases():
-    assert calculate_discount(100, 10) == 90.0
-"""
-        # Build mock instructions
-        mock_instructions = ""
-        if import_map:
-            mock_instructions = "**Detected Imports & Mocking Strategy:**\n"
-            for var, path in import_map.items():
-                if 'boto3' in path or 'kafka' in path or 'sqlalchemy' in path or 'requests' in path:
-                    mock_instructions += "- The code uses `{}` (imported from `{}`). To mock it, use `mocker.patch('{}')` if it's a module-level import.\n".format(var, path, path)
-                    mock_instructions += "- If the code uses `from {} import {}`, patch the local reference using `mocker.patch('__main__.{}')`.\n".format(path.split('.')[0], var, var)
-        else:
-            mock_instructions = "**Mocking Strategy:** Use `mocker.patch` for all external dependencies."
+    # Run the full Auto-Heal loop (uses the default generate_test)
+    passed, final_code, diff_string = engine.run_full_loop()
 
-        impact_warning = ""
-        if impact_radius:
-            impact_warning = """
-**⚠️ IMPACT RADIUS WARNING (CRITICAL):**
-This function is used in {} other file(s) in this repository.
-- **DO NOT change the function signature, return type, or input parameters.**
-- You must maintain backward compatibility.
-- Here is where it is used:
-{}
-""".format(len(impact_radius), json.dumps(impact_radius[:3], indent=2))
-
-        prompt = """
-        Write pytest tests for this function:**Context (Surrounding code):**
-{}
-
-**Imports (use these):**
-{}
-
-**Local Function Signatures (Called by your function):**
-{}
-
-{}
-
-{}
-
-**Mocking Instructions (Detailed):**
-- Use `mocker.patch` for ALL external dependencies.
-- If the code imports a library using `from lib import func`, patch the local reference using `mocker.patch('__main__.func')`.
-- Ensure tests are deterministic and do NOT hit external APIs.
-- Focus on edge cases: negative values, zeroes, nulls, and boundary conditions.
-""".format(
-    code_snippet,
-    extracted['context'],
-    '\n'.join(imports) if imports else '',
-    local_sigs,
-    impact_warning,
-    mock_instructions
-)
-# THIS RETURN IS INSIDE generate_test_func – PERFECTLY VALID
-return engine.llm.generate(prompt)
-
-# Assign the custom function to the engine
-engine.generate_test = generate_test_func
-
-# Run the Auto-Heal loop
-passed, final_code, diff_string = engine.run_full_loop()
-
-brand_footprint = "\n\n---\n🛡️ *Fixed automatically by [Aegis](https://test-qa-bot-production.up.railway.app)*"
-return {
-'success': passed,
-'fixed_code': final_code,
-'diff_output': diff_string + brand_footprint,
-'message': 'Analysis complete.'
-}
+    brand_footprint = "\n\n---\n🛡️ *Fixed automatically by [Aegis](https://test-qa-bot-production.up.railway.app)*"
+    return {
+        'success': passed,
+        'fixed_code': final_code,
+        'diff_output': diff_string + brand_footprint,
+        'message': 'Analysis complete.'
+    }
