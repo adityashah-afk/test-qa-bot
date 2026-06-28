@@ -143,7 +143,7 @@ def get_db_connection():
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
-    conn.row_factory = sqlite3.Row  # allows dict-like access
+    conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
@@ -426,7 +426,7 @@ def add_referral(referrer_id, referred_user_id):
     conn.close()
 
 # ============================================================
-# MISSING FUNCTION - ADDED HERE
+# ⭐ MISSING FUNCTION – NOW ADDED
 # ============================================================
 def get_user_by_referral_code(code):
     conn = get_db_connection()
@@ -1128,7 +1128,6 @@ def webhook():
     if user:
         org_id = user[14] if len(user) > 14 else None
         if org_id:
-            # These functions are defined elsewhere – ensure they exist
             try:
                 from code_scanner import get_org_api_key, get_org_rules
                 org_api_key = get_org_api_key(org_id)
@@ -1253,7 +1252,6 @@ def webhook():
             logger.info(f"Code change triggered on PR #{pr_number} in {repo_name}")
             try:
                 diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                # This function needs to be defined elsewhere – if not, handle gracefully
                 try:
                     from code_scanner import process_natural_language_change
                     change_result = process_natural_language_change(instruction, diff_content, user)
