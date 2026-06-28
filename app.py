@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Aegis - Enterprise Ready Backend
-Supports: Stripe (International) + Razorpay (India/UPI)
+Supports: Paddle (International) + Razorpay (India/UPI)
 """
 
 import os
@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, redirect, url_for, session, flash, render_template_string, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
-import stripe
+import paddle
 import razorpay
 from dotenv import load_dotenv
 load_dotenv()
@@ -83,9 +83,13 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
 # ============================================================
 # Config
 # ============================================================
-# Stripe
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+# Paddle
+PADDLE_API_KEY = os.getenv("PADDLE_API_KEY")
+PADDLE_WEBHOOK_SECRET = os.getenv("PADDLE_WEBHOOK_SECRET")
+PADDLE_VENDOR_ID = os.getenv("PADDLE_VENDOR_ID", "")
+
+# Initialize Paddle client
+paddle_client = paddle.Client(api_key=PADDLE_API_KEY)
 
 # Razorpay
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
@@ -434,7 +438,6 @@ def analyze_pr_diff_routed(diff_text, use_mock, model_override, repo, pr, team_r
         from pr_analyzer import analyze_pr_diff
         return analyze_pr_diff(diff_text, use_mock, model_override, repo, pr, team_rules)
     elif lang == 'javascript':
-        # JavaScript support is routed but not fully executed in this MVP
         return {
             'success': True,
             'message': 'JavaScript support is live! (Jest)',
@@ -743,7 +746,7 @@ def logout():
     session.clear(); flash('Logged out.'); return redirect(url_for('home'))
 
 # ============================================================
-# STRIPE PRODUCTS (International)
+# PADDLE CHECKOUT SESSION (International)
 # ============================================================
 @app.route("/create-checkout-session", methods=['POST'])
 def create_checkout_session():
@@ -752,75 +755,108 @@ def create_checkout_session():
     user = get_user_by_id(session['user_id'])
     if not user:
         return jsonify({"error": "User not found"}), 404
+
     plan = request.form.get('plan') or 'monthly'
+    # Map plan names to Paddle price IDs (set these in your environment)
     price_map = {
-        'monthly': os.getenv("STRIPE_PRICE_MONTHLY"),
-        'team_annual': os.getenv("STRIPE_PRICE_TEAM_ANNUAL"),
-        'individual_biennial': os.getenv("STRIPE_PRICE_INDIVIDUAL_BIENNIAL")
+        'monthly': os.getenv("PADDLE_PRICE_MONTHLY"),
+        'team_annual': os.getenv("PADDLE_PRICE_TEAM_ANNUAL"),
+        'individual_biennial': os.getenv("PADDLE_PRICE_INDIVIDUAL_BIENNIAL")
     }
     price_id = price_map.get(plan)
     if not price_id:
         return jsonify({"error": "Invalid plan"}), 400
+
     try:
-        checkout_session = stripe.checkout.Session.create(
-            customer=user[7] or None,
-            payment_method_types=['card'],
-            line_items=[{'price': price_id, 'quantity': 1}],
-            mode='subscription',
-            success_url=f"{YOUR_DOMAIN}/dashboard?success=true",
-            cancel_url=f"{YOUR_DOMAIN}/dashboard?canceled=true",
-            metadata={'user_id': user[0]}
+        # Create a transaction with Paddle
+        transaction = paddle_client.transactions.create(
+            items=[{
+                'price_id': price_id,
+                'quantity': 1
+            }],
+            customer={
+                'email': user[3]  # user email from DB
+            },
+            custom_data={
+                'user_id': str(user[0])
+            }
         )
-        return jsonify({'url': checkout_session.url})
-    except Exception as e:
-        logger.error(f"Stripe error: {e}")
+        # Get checkout URL
+        checkout_url = transaction['data']['checkout']['url']
+        return jsonify({'url': checkout_url})
+    except paddle.PaddleError as e:
+        logger.error(f"Paddle error: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route("/stripe-webhook", methods=['POST'])
-def stripe_webhook():
+@app.route("/paddle-webhook", methods=['POST'])
+def paddle_webhook():
     payload = request.get_data(as_text=True)
-    sig_header = request.headers.get('Stripe-Signature')
+    signature = request.headers.get('Paddle-Signature')
+    if not signature:
+        return jsonify({"error": "Missing signature"}), 400
+
     try:
-        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
-    except ValueError:
-        return jsonify({"error": "Invalid payload"}), 400
-    except stripe.error.SignatureVerificationError:
+        # Verify webhook signature
+        paddle_client.verify_webhook_signature(
+            payload=payload,
+            signature_header=signature,
+            secret=PADDLE_WEBHOOK_SECRET
+        )
+    except paddle.exceptions.VerificationError:
         return jsonify({"error": "Invalid signature"}), 400
-    data_object = event['data']['object']
-    if event['type'] == 'checkout.session.completed':
-        session_data = data_object
-        customer_id = session_data['customer']
-        subscription_id = session_data['subscription']
-        user_id = int(session_data['metadata']['user_id'])
-        sub = stripe.Subscription.retrieve(subscription_id)
-        update_subscription(user_id, customer_id, subscription_id, sub.status)
-    elif event['type'] == 'customer.subscription.updated':
-        subscription = data_object
-        customer_id = subscription['customer']
-        status = subscription['status']
+
+    event = json.loads(payload)
+    event_type = event.get('event_type')
+    data = event.get('data', {})
+
+    if event_type == 'transaction.completed':
+        # Payment successful
+        user_id = data.get('custom_data', {}).get('user_id')
+        subscription_id = data.get('subscription_id')
+        customer_id = data.get('customer_id')
+
+        if user_id:
+            conn = get_db_connection()
+            c = conn.cursor()
+            c.execute('''
+                UPDATE users 
+                SET subscription_status = 'active',
+                    stripe_customer_id = ?
+                WHERE id = ?
+            ''', (customer_id, int(user_id)))
+            conn.commit()
+            conn.close()
+            logger.info(f"✅ Paddle payment captured for user {user_id}")
+
+    elif event_type == 'subscription.updated':
+        sub_data = data
+        customer_id = sub_data.get('customer_id')
+        status = sub_data.get('status')
         conn = get_db_connection()
         c = conn.cursor()
         c.execute('UPDATE users SET subscription_status = ? WHERE stripe_customer_id = ?', (status, customer_id))
         conn.commit()
         conn.close()
-    elif event['type'] == 'customer.subscription.deleted':
-        subscription = data_object
-        customer_id = subscription['customer']
+
+    elif event_type == 'subscription.canceled':
+        sub_data = data
+        customer_id = sub_data.get('customer_id')
         conn = get_db_connection()
         c = conn.cursor()
         c.execute('UPDATE users SET subscription_status = "canceled" WHERE stripe_customer_id = ?', (customer_id,))
         conn.commit()
         conn.close()
+
     return jsonify({"status": "success"}), 200
 
 # ============================================================
 # RAZORPAY PRODUCTS (India / UPI)
 # ============================================================
 PRICE_MAP_RAZORPAY = {
-    'monthly': {'amount': 2400, 'desc': 'Developer ($29)'},        # ₹2,400
-    'team_monthly': {'amount': 4000, 'desc': 'Team ($49)'},         # ₹4,000
-    'team_annual': {'amount': 165000, 'desc': 'Founder\'s Pass'},   # ₹1,65,000
-    'individual_biennial': {'amount': 24000, 'desc': 'Lock-In Pass'} # ₹24,000
+    'monthly': {'amount': 2400, 'desc': 'Developer ($29)'},
+    'team_monthly': {'amount': 4000, 'desc': 'Team ($49)'},
+    'team_annual': {'amount': 165000, 'desc': 'Founder\'s Pass'},
+    'individual_biennial': {'amount': 24000, 'desc': 'Lock-In Pass'}
 }
 
 @app.route("/create-razorpay-order", methods=['POST'])
@@ -839,7 +875,7 @@ def create_razorpay_order():
     price_info = PRICE_MAP_RAZORPAY[plan]
     try:
         order_data = {
-            'amount': price_info['amount'] * 100,  # paisa
+            'amount': price_info['amount'] * 100,
             'currency': 'INR',
             'receipt': f'receipt_{user[0]}_{plan}',
             'notes': {'user_id': user[0], 'plan': plan}
@@ -878,7 +914,6 @@ def razorpay_webhook():
         user_id = int(notes.get('user_id'))
         plan = notes.get('plan')
 
-        # Update user subscription status
         conn = get_db_connection()
         c = conn.cursor()
         c.execute('''
@@ -892,7 +927,6 @@ def razorpay_webhook():
 
         logger.info(f"✅ Razorpay payment captured for user {user_id} (Plan: {plan})")
 
-        # Extend trial
         if 'annual' in plan or 'biennial' in plan:
             expiry = (datetime.utcnow() + timedelta(days=365)).strftime('%Y-%m-%d %H:%M:%S')
         else:

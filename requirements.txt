@@ -9,4 +9,4 @@ redis==5.0.1
 sendgrid==6.10.0
 razorpay==1.4.2
 setuptools==71.1.0
-wheel==0.42.0
+wheel==0.42.0paddle-python
