@@ -291,8 +291,8 @@ def generate_verification_code():
 
 def is_trial_active(user):
     if not user: return False
-    if user[9] == 'active': return True
-    trial_expires_at = user[12] if len(user) > 12 else None
+    if user[13] == 'active': return True
+    trial_expires_at = user[16] if len(user) > 16 else None
     if trial_expires_at:
         try:
             expiry = datetime.strptime(trial_expires_at, '%Y-%m-%d %H:%M:%S')
@@ -403,9 +403,6 @@ def add_referral(referrer_id, referred_user_id):
     conn.commit()
     conn.close()
 
-# ============================================================
-# CRITICAL: Missing function added here
-# ============================================================
 def get_user_by_referral_code(code):
     conn = get_db_connection()
     c = conn.cursor()
@@ -556,22 +553,22 @@ jobs:
 @app.route("/github-oauth/authorize")
 def github_oauth_authorize():
     """Redirect user to GitHub for OAuth authorization."""
-    print(f"👤 Session user_id: {session.get('user_id')}")  # DEBUG
+    print(f"👤 Session user_id: {session.get('user_id')}")
     if 'user_id' not in session:
         flash('Please log in first.')
         return redirect(url_for('login'))
     
     scope = "repo,user"
     redirect_uri = f"{YOUR_DOMAIN}/github-oauth/callback"
-    print(f"🔑 GITHUB_CLIENT_ID: {GITHUB_CLIENT_ID}")  # DEBUG
-    print(f"🔑 YOUR_DOMAIN: {YOUR_DOMAIN}")  # DEBUG
+    print(f"🔑 GITHUB_CLIENT_ID: {GITHUB_CLIENT_ID}")
+    print(f"🔑 YOUR_DOMAIN: {YOUR_DOMAIN}")
     auth_url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={GITHUB_CLIENT_ID}"
         f"&redirect_uri={redirect_uri}"
         f"&scope={scope}"
     )
-    print(f"🔀 Redirecting to: {auth_url}")  # DEBUG
+    print(f"🔀 Redirecting to: {auth_url}")
     return redirect(auth_url)
 
 @app.route("/github-oauth/callback")
@@ -582,7 +579,7 @@ def github_oauth_callback():
         return redirect(url_for('login'))
     
     code = request.args.get('code')
-    print(f"🔍 Callback received code: {code}")  # DEBUG
+    print(f"🔍 Callback received code: {code}")
     if not code:
         flash('GitHub authorization failed: no code received.')
         return redirect(url_for('dashboard'))
@@ -594,25 +591,25 @@ def github_oauth_callback():
         'code': code,
         'redirect_uri': f"{YOUR_DOMAIN}/github-oauth/callback"
     }
-    print(f"🔑 Exchanging code for token with redirect_uri: {payload['redirect_uri']}")  # DEBUG
+    print(f"🔑 Exchanging code for token with redirect_uri: {payload['redirect_uri']}")
     headers = {'Accept': 'application/json'}
     try:
         response = requests.post(token_url, data=payload, headers=headers)
         response.raise_for_status()
         data = response.json()
         access_token = data.get('access_token')
-        print(f"🔑 Access token received: {access_token[:10] if access_token else 'None'}...")  # DEBUG
+        print(f"🔑 Access token received: {access_token[:10] if access_token else 'None'}...")
         if not access_token:
             flash('Could not retrieve access token.')
             return redirect(url_for('dashboard'))
     except Exception as e:
         logger.error(f"GitHub OAuth error: {e}")
-        print(f"❌ GitHub OAuth exception: {e}")  # DEBUG
+        print(f"❌ GitHub OAuth exception: {e}")
         flash('GitHub authentication failed.')
         return redirect(url_for('dashboard'))
     
     user_id = session['user_id']
-    print(f"👤 Saving token for user_id: {user_id}")  # DEBUG
+    print(f"👤 Saving token for user_id: {user_id}")
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('UPDATE users SET github_token = ? WHERE id = ?', (access_token, user_id))
@@ -663,6 +660,11 @@ def signup():
                 VALUES (?, ?, ?, ?, ?, ?, ?, 1)
             ''', (full_name, email, company, username, password_hash, trial_expiry, my_code))
             user_id = c.lastrowid
+            if referral_code:
+                referrer = get_user_by_referral_code(referral_code)
+                if referrer:
+                    c.execute('UPDATE users SET referred_by = ? WHERE id = ?', (referrer[0], user_id))
+                    add_referral(referrer[0], user_id)
             c.execute('''
                 INSERT INTO email_verifications (email, code, expires_at)
                 VALUES (?, ?, ?)
@@ -996,7 +998,7 @@ def team_settings():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     user = get_user_by_id(session['user_id'])
-    org_id = user[14] if len(user) > 14 else None
+    org_id = user[19] if len(user) > 19 else None
     if not org_id:
         flash("You are not part of an organization. Please upgrade to the Team plan.")
         return redirect(url_for('dashboard'))
@@ -1018,7 +1020,7 @@ def audit_logs():
     if 'user_id' not in session:
         return redirect(url_for('login'))
     user = get_user_by_id(session['user_id'])
-    org_id = user[14] if len(user) > 14 else None
+    org_id = user[19] if len(user) > 19 else None
     if not org_id:
         flash("No organization found.")
         return redirect(url_for('dashboard'))
@@ -1035,7 +1037,7 @@ def audit_logs():
     return html
 
 # ============================================================
-# DASHBOARD (ROI + Scarcity) – with TRIAL FIX
+# DASHBOARD (ROI + Scarcity) – with CORRECTED INDICES
 # ============================================================
 @app.route("/dashboard", methods=['GET', 'POST'])
 def dashboard():
@@ -1043,12 +1045,15 @@ def dashboard():
         return redirect(url_for('login'))
     user_id = session['user_id']
     user = get_user_by_id(user_id)
-    org_id = user[14] if len(user) > 14 else None
+    if not user:
+        flash('User not found.')
+        return redirect(url_for('logout'))
+    org_id = user[19] if len(user) > 19 else None
 
     # ============================================================
     # FIXED TRIAL CHECK – with fallback and auto-set
     # ============================================================
-    trial_expires_at = user[12] if len(user) > 12 else None
+    trial_expires_at = user[16] if len(user) > 16 else None
     is_expired = True
     days_left = 0
 
@@ -1059,11 +1064,9 @@ def dashboard():
                 is_expired = False
                 days_left = (expiry - datetime.utcnow()).days
         except:
-            # If parsing fails, treat as not expired and set a 14-day trial
             is_expired = False
             days_left = 14
     else:
-        # No trial expiry set – create one now
         is_expired = False
         days_left = 14
         new_trial = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
@@ -1246,19 +1249,23 @@ def dashboard():
     html = html.replace('{{ days_left }}', str(days_left))
 
     referral_count = count_referrals(user_id)
-    referral_link = f"{YOUR_DOMAIN}/signup?ref={user[13]}"
+    referral_link = f"{YOUR_DOMAIN}/signup?ref={user[17]}"  # referral_code at 17
     html = html.replace('{{ referral_link }}', referral_link)
     html = html.replace('{{ referral_count }}', str(referral_count))
-    html = html.replace('value="deepseek"', f'value="{user[3]}" selected' if user[3] == 'deepseek' else 'value="deepseek"')
-    html = html.replace('placeholder="owner/repo"', f'value="{user[5] or ""}"')
-    html = html.replace('placeholder="sk-..."', f'value="{user[4] or ""}"')
-    html = html.replace('placeholder="e.g. gpt-4o..."', f'value="{user[11] or ""}"')
-    sub_status = user[9] or 'inactive'
+    html = html.replace('value="deepseek"', f'value="{user[7]}" selected' if user[7] == 'deepseek' else 'value="deepseek"')
+    html = html.replace('placeholder="owner/repo"', f'value="{user[9] or ""}"')
+    html = html.replace('placeholder="sk-..."', f'value="{user[8] or ""}"')
+    html = html.replace('placeholder="e.g. gpt-4o..."', f'value="{user[15] or ""}"')
+    sub_status = user[13] or 'inactive'  # subscription_status at 13
     if sub_status == 'active':
         html = html.replace('Billing Status: Inactive', 'Billing Status: ✅ Active')
     else:
         html = html.replace('Billing Status: Inactive', f'Billing Status: ⏳ Trial ({days_left} days left)')
-    github_status = '✅ Connected' if user[6] else '❌ Not Connected'
+    
+    # ============================================================
+    # FIXED: github_token is at index 10
+    # ============================================================
+    github_status = '✅ Connected' if user[10] else '❌ Not Connected'
     html = html.replace('GitHub Status: Not Connected', f'GitHub Status: {github_status}')
     return html
 
@@ -1287,7 +1294,7 @@ def webhook():
     org_id = None
     team_rules = None
     if user:
-        org_id = user[14] if len(user) > 14 else None
+        org_id = user[19] if len(user) > 19 else None
         if org_id:
             try:
                 from code_scanner import get_org_api_key, get_org_rules
@@ -1313,9 +1320,9 @@ def webhook():
                     os.environ['LLM_PROVIDER'] = 'deepseek'
                     os.environ['OPENAI_API_KEY'] = org_api_key
                 elif user:
-                    os.environ['LLM_PROVIDER'] = user[3]
-                    os.environ['OPENAI_API_KEY'] = user[4] or ""
-                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+                    os.environ['LLM_PROVIDER'] = user[7]
+                    os.environ['OPENAI_API_KEY'] = user[8] or ""
+                os.environ['GITHUB_TOKEN'] = user[10] if user else os.getenv("GITHUB_TOKEN")
                 diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
                 answer = ask_question_about_code(question, diff_content)
                 post_comment(repo, pr_number, f"🤖 **AI Chatbot:**\n\n{answer}")
@@ -1333,12 +1340,12 @@ def webhook():
                     os.environ['LLM_PROVIDER'] = 'deepseek'
                     os.environ['OPENAI_API_KEY'] = org_api_key
                 elif user:
-                    os.environ['LLM_PROVIDER'] = user[3]
-                    os.environ['OPENAI_API_KEY'] = user[4] or ""
-                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
-                user_model = user[11] if user and len(user) > 11 else None
+                    os.environ['LLM_PROVIDER'] = user[7]
+                    os.environ['OPENAI_API_KEY'] = user[8] or ""
+                os.environ['GITHUB_TOKEN'] = user[10] if user else os.getenv("GITHUB_TOKEN")
+                user_model = user[15] if user and len(user) > 15 else None
                 diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                api_key = user[4] if user else None
+                api_key = user[8] if user else None
                 use_mock = not (org_api_key or api_key)
                 result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
                 status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
@@ -1369,12 +1376,12 @@ def webhook():
                     os.environ['LLM_PROVIDER'] = 'deepseek'
                     os.environ['OPENAI_API_KEY'] = org_api_key
                 elif user:
-                    os.environ['LLM_PROVIDER'] = user[3]
-                    os.environ['OPENAI_API_KEY'] = user[4] or ""
-                os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
-                user_model = user[11] if user and len(user) > 11 else None
+                    os.environ['LLM_PROVIDER'] = user[7]
+                    os.environ['OPENAI_API_KEY'] = user[8] or ""
+                os.environ['GITHUB_TOKEN'] = user[10] if user else os.getenv("GITHUB_TOKEN")
+                user_model = user[15] if user and len(user) > 15 else None
                 diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-                api_key = user[4] if user else None
+                api_key = user[8] if user else None
                 use_mock = not (org_api_key or api_key)
                 result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
                 status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
@@ -1479,14 +1486,14 @@ def webhook():
                 os.environ['LLM_PROVIDER'] = 'deepseek'
                 os.environ['OPENAI_API_KEY'] = org_api_key
             elif user:
-                os.environ['LLM_PROVIDER'] = user[3]
-                os.environ['OPENAI_API_KEY'] = user[4] or ""
-            os.environ['GITHUB_TOKEN'] = user[6] if user else os.getenv("GITHUB_TOKEN")
+                os.environ['LLM_PROVIDER'] = user[7]
+                os.environ['OPENAI_API_KEY'] = user[8] or ""
+            os.environ['GITHUB_TOKEN'] = user[10] if user else os.getenv("GITHUB_TOKEN")
 
             diff_content, repo, pr = get_pr_diff(repo_name, pr_number)
-            api_key = user[4] if user else None
+            api_key = user[8] if user else None
             use_mock = not (org_api_key or api_key)
-            user_model = user[11] if user and len(user) > 11 else None
+            user_model = user[15] if user and len(user) > 15 else None
             result = analyze_pr_diff_routed(diff_content, use_mock, user_model, repo, pr, team_rules)
             status = "✅ PASSED" if result['success'] else "❌ FAILED (Needs Review)"
             comment = f"""🤖 **AI QA Report for PR #{pr_number}**
