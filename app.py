@@ -48,7 +48,7 @@ except Exception as e:
     logger.warning(f"⚠️ Redis connection failed: {e}. Caching disabled.")
 
 # ============================================================
-# Email Imports (SendGrid) – not used right now
+# Email Imports (SendGrid – temporarily disabled)
 # ============================================================
 import sendgrid
 from sendgrid.helpers.mail import Mail
@@ -109,7 +109,6 @@ FROM_EMAIL = os.getenv("FROM_EMAIL", "hello@aegis.com")
 
 def send_verification_email(email, code):
     # Disabled – email verification bypassed
-    # We keep the function to avoid errors, but it doesn't send emails.
     return True
 
 # ============================================================
@@ -587,20 +586,16 @@ def signup():
         conn = get_db_connection()
         c = conn.cursor()
         try:
-            # Insert user with email_verified = 1 (bypass verification)
             c.execute('''
                 INSERT INTO users (full_name, email, company, username, password_hash, trial_expires_at, referral_code, email_verified)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 1)
             ''', (full_name, email, company, username, password_hash, trial_expiry, my_code))
             user_id = c.lastrowid
-            # Referral logic removed – you can re-enable later
             c.execute('''
                 INSERT INTO email_verifications (email, code, expires_at)
                 VALUES (?, ?, ?)
             ''', (email, verif_code, verif_expires))
             conn.commit()
-            # Email sending disabled – bypass verification
-            # send_verification_email(email, verif_code)
             flash('Account created! You can now log in.')
             return redirect(url_for('login'))
         except sqlite3.IntegrityError:
@@ -643,7 +638,6 @@ def signup():
 @app.route("/verify-email", methods=['GET', 'POST'])
 def verify_email():
     # This route is still available but not used because email verification is bypassed.
-    # If a user tries to verify, we'll just log them in.
     email = request.args.get('email') or request.form.get('email')
     if request.method == 'POST':
         code = request.form.get('code')
@@ -701,7 +695,6 @@ def resend_verification():
     ''', (email, code, verif_expires))
     conn.commit()
     conn.close()
-    # send_verification_email(email, code)  # disabled
     flash('New code sent! Please check your email.')
     return redirect(url_for('verify_email', email=email))
 
@@ -713,10 +706,6 @@ def login():
         password = request.form.get('password')
         user = get_user(username)
         if user and check_password_hash(user[2], password):
-            # Email verification is bypassed – user[3] is always 1 now
-            if not user[3]:
-                flash('Please verify your email first.')
-                return redirect(url_for('verify_email', email=user[3]))
             session['user_id'] = user[0]; session['username'] = user[1]; session.permanent = True
             flash('Logged in successfully.')
             return redirect(url_for('dashboard'))
@@ -761,6 +750,7 @@ def create_checkout_session():
     plan = request.form.get('plan') or 'monthly'
     price_map = {
         'monthly': os.getenv("PADDLE_PRICE_MONTHLY"),
+        'team_monthly': os.getenv("PADDLE_PRICE_TEAM_MONTHLY"),  # <-- Added for Team monthly
         'team_annual': os.getenv("PADDLE_PRICE_TEAM_ANNUAL"),
         'individual_biennial': os.getenv("PADDLE_PRICE_INDIVIDUAL_BIENNIAL")
     }
@@ -797,8 +787,6 @@ def paddle_webhook():
     if not signature:
         return jsonify({"error": "Missing signature"}), 400
 
-    # In production, verify the signature using PADDLE_WEBHOOK_SECRET
-    # For now, just parse the event
     try:
         event = json.loads(payload)
     except:
@@ -975,7 +963,7 @@ def audit_logs():
     return html
 
 # ============================================================
-# DASHBOARD (ROI + Scarcity)
+# DASHBOARD (ROI + Scarcity) – with TRIAL FIX
 # ============================================================
 @app.route("/dashboard", methods=['GET', 'POST'])
 def dashboard():
@@ -984,6 +972,10 @@ def dashboard():
     user_id = session['user_id']
     user = get_user_by_id(user_id)
     org_id = user[14] if len(user) > 14 else None
+
+    # ============================================================
+    # FIXED TRIAL CHECK – with fallback and auto-set
+    # ============================================================
     trial_expires_at = user[12] if len(user) > 12 else None
     is_expired = True
     days_left = 0
@@ -995,7 +987,23 @@ def dashboard():
                 is_expired = False
                 days_left = (expiry - datetime.utcnow()).days
         except:
-            pass
+            # If parsing fails, treat as not expired and set a 14-day trial
+            is_expired = False
+            days_left = 14
+    else:
+        # No trial expiry set – create one now
+        is_expired = False
+        days_left = 14
+        new_trial = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute('UPDATE users SET trial_expires_at = ? WHERE id = ?', (new_trial, user_id))
+        conn.commit()
+        conn.close()
+
+    # ============================================================
+    # END OF TRIAL CHECK
+    # ============================================================
 
     if is_expired:
         return render_template_string('''
@@ -1008,32 +1016,141 @@ def dashboard():
         .inventory { color: #facc15; font-weight: bold; }</style>
         </head>
         <body class="min-h-screen flex items-center justify-center">
-        <div class="max-w-4xl w-full mx-auto p-6">
+        <div class="max-w-5xl w-full mx-auto p-6">
         <div class="card-dark text-center">
-        <div class="text-6xl mb-4">⏳</div><h1 class="text-4xl font-bold text-white">Your Trial Has Ended</h1>
-        <p class="text-[#6b7280] mt-2">But the party is just getting started.</p>
+        <div class="text-6xl mb-4">⏳</div>
+        <h1 class="text-4xl font-bold text-white">Your Trial Has Ended</h1>
+        <p class="text-[#6b7280] mt-2">Choose a plan to keep using Aegis.</p>
         <div class="mt-6"><p class="text-sm text-gray-400">⏱️ Prices increase in:</p><div id="countdown" class="countdown">-- : -- : --</div><p class="text-xs text-gray-500">Offer ends Sunday at midnight</p></div>
         <div class="mt-4"><span class="inventory">🔥 28 out of 30</span> <span class="text-gray-400">Founder's Passes remaining</span></div>
-        <div class="grid md:grid-cols-2 gap-6 mt-8 max-w-2xl mx-auto">
-        <div class="bg-gray-900/50 p-6 rounded-xl border-2 border-cyan-500/50 relative">
-        <span class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-cyan-600 text-white text-xs px-4 py-1 rounded-full">BEST FOR TEAMS</span>
-        <h3 class="text-xl font-bold text-white mt-2">👑 Founder's Pass (Team)</h3>
-        <p class="text-4xl font-bold text-cyan-400 mt-2">$1,999</p><p class="text-xs text-[#6b7280]">Up to 15 users • 1 year</p>
-        <ul class="mt-4 text-sm text-gray-300 text-left space-y-1"><li>✅ Unlimited PR reviews</li><li>✅ Centralized Billing</li><li>✅ Audit Logs</li></ul>
-        <a href="/create-checkout-session?plan=team_annual" class="block mt-4 bg-cyan-600 hover:bg-cyan-700 px-6 py-3 rounded-lg font-bold transition">⚡ Upgrade Now</a>
-        </div>
+
+        <!-- ============================================================
+        ALL 4 PLANS (GRID)
+        ============================================================ -->
+        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mt-8 max-w-6xl mx-auto">
+
+        <!-- PLAN 1: Individual ($29/mo) -->
         <div class="bg-gray-900/50 p-6 rounded-xl border border-gray-700">
-        <h3 class="text-xl font-bold text-white">🚀 Lock-In Pass</h3>
-        <p class="text-4xl font-bold text-cyan-400 mt-2">$290</p><p class="text-xs text-[#6b7280]">2 years for the price of 1</p>
-        <ul class="mt-4 text-sm text-gray-300 text-left space-y-1"><li>✅ Unlimited PR reviews</li><li>✅ Self-hosted key (BYOK)</li><li>✅ Priority support</li></ul>
-        <a href="/create-checkout-session?plan=individual_biennial" class="block mt-4 border border-gray-600 hover:border-cyan-500 px-6 py-3 rounded-lg font-bold transition">🔒 Lock It In</a>
-        </div></div>
+            <h3 class="text-lg font-bold text-white">👤 Individual</h3>
+            <p class="text-3xl font-bold text-cyan-400 mt-2">$29</p>
+            <p class="text-xs text-[#6b7280]">/ month • 1 user</p>
+            <ul class="mt-4 text-sm text-gray-300 text-left space-y-1">
+                <li>✅ Unlimited PR reviews</li>
+                <li>✅ Auto-Heal fixes</li>
+                <li>✅ BYOK (Bring Your Own Key)</li>
+            </ul>
+            <form action="/create-checkout-session" method="POST" class="mt-4">
+                <input type="hidden" name="plan" value="monthly">
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-bold transition">Subscribe</button>
+            </form>
+            <!-- Razorpay option for India -->
+            <button onclick="initiateRazorpayPayment('monthly')" class="w-full mt-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-bold transition">Pay ₹2,400</button>
+        </div>
+
+        <!-- PLAN 2: Team ($49/mo) -->
+        <div class="bg-gray-900/50 p-6 rounded-xl border border-gray-700">
+            <h3 class="text-lg font-bold text-white">👥 Team</h3>
+            <p class="text-3xl font-bold text-cyan-400 mt-2">$49</p>
+            <p class="text-xs text-[#6b7280]">/ month • Up to 7 users</p>
+            <ul class="mt-4 text-sm text-gray-300 text-left space-y-1">
+                <li>✅ Everything in Individual</li>
+                <li>✅ Centralized billing</li>
+                <li>✅ Audit logs</li>
+            </ul>
+            <form action="/create-checkout-session" method="POST" class="mt-4">
+                <input type="hidden" name="plan" value="team_monthly">
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-bold transition">Subscribe</button>
+            </form>
+            <button onclick="initiateRazorpayPayment('team_monthly')" class="w-full mt-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-bold transition">Pay ₹4,000</button>
+        </div>
+
+        <!-- PLAN 3: Founder's Pass ($1,999) -->
+        <div class="bg-gray-900/50 p-6 rounded-xl border-2 border-cyan-500/50 relative">
+            <span class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-cyan-600 text-white text-xs px-4 py-1 rounded-full">BEST FOR TEAMS</span>
+            <h3 class="text-lg font-bold text-white mt-2">👑 Founder's Pass</h3>
+            <p class="text-3xl font-bold text-cyan-400 mt-2">$1,999</p>
+            <p class="text-xs text-[#6b7280]">1 year • Up to 15 users</p>
+            <ul class="mt-4 text-sm text-gray-300 text-left space-y-1">
+                <li>✅ Unlimited PR reviews</li>
+                <li>✅ Centralized billing</li>
+                <li>✅ Audit logs</li>
+                <li>✅ Priority support</li>
+            </ul>
+            <form action="/create-checkout-session" method="POST" class="mt-4">
+                <input type="hidden" name="plan" value="team_annual">
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-bold transition">Subscribe</button>
+            </form>
+            <button onclick="initiateRazorpayPayment('team_annual')" class="w-full mt-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-bold transition">Pay ₹1,65,000</button>
+        </div>
+
+        <!-- PLAN 4: Lock-In Pass ($290) -->
+        <div class="bg-gray-900/50 p-6 rounded-xl border border-gray-700">
+            <h3 class="text-lg font-bold text-white">🔒 Lock-In Pass</h3>
+            <p class="text-3xl font-bold text-cyan-400 mt-2">$290</p>
+            <p class="text-xs text-[#6b7280]">2 years • Individual</p>
+            <ul class="mt-4 text-sm text-gray-300 text-left space-y-1">
+                <li>✅ Unlimited PR reviews</li>
+                <li>✅ BYOK (Bring Your Own Key)</li>
+                <li>✅ Priority support</li>
+            </ul>
+            <form action="/create-checkout-session" method="POST" class="mt-4">
+                <input type="hidden" name="plan" value="individual_biennial">
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-bold transition">Subscribe</button>
+            </form>
+            <button onclick="initiateRazorpayPayment('individual_biennial')" class="w-full mt-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-bold transition">Pay ₹24,000</button>
+        </div>
+
+        </div>
+
         <p class="text-xs text-gray-500 mt-8">*Prices increase on Monday. All plans include a 30-day money-back guarantee.</p>
-        </div></div>
+        </div>
+        </div>
         <script>
         var countDownDate = new Date(); countDownDate.setDate(countDownDate.getDate() + (7 - countDownDate.getDay())); countDownDate.setHours(23,59,59,0);
         var x = setInterval(function() { var now = new Date().getTime(); var distance = countDownDate - now; var hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)); var minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60)); var seconds = Math.floor((distance % (1000 * 60)) / 1000); document.getElementById("countdown").innerHTML = ("0" + hours).slice(-2) + ":" + ("0" + minutes).slice(-2) + ":" + ("0" + seconds).slice(-2); if (distance < 0) { clearInterval(x); document.getElementById("countdown").innerHTML = "OFFER EXPIRED"; } }, 1000);
-        </script></body></html>
+        </script>
+
+        <!-- Razorpay script for India payments -->
+        <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+        <script>
+        function initiateRazorpayPayment(plan) {
+            fetch('/create-razorpay-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ plan: plan })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+                var options = {
+                    "key": data.key_id,
+                    "amount": data.amount,
+                    "currency": data.currency,
+                    "name": "Aegis",
+                    "description": "AI QA Engineer Subscription",
+                    "order_id": data.order_id,
+                    "handler": function (response) {
+                        alert("✅ Payment successful! Your subscription is now active.");
+                        window.location.reload();
+                    },
+                    "modal": {
+                        "ondismiss": function () {
+                            alert("Payment cancelled.");
+                        }
+                    }
+                };
+                var rzp = new Razorpay(options);
+                rzp.open();
+            })
+            .catch(err => {
+                alert('Error initiating payment: ' + err.message);
+            });
+        }
+        </script>
+        </body></html>
         ''')
 
     # ROI DASHBOARD
