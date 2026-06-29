@@ -51,8 +51,9 @@
             transition: all 0.2s ease;
         }
         .btn-secondary:hover { border-color: #3b82f6; color: white; }
-        .btn-stripe {
-            background: #635bff;
+        /* Renamed class for Paddle (kept same styling) */
+        .btn-paddle {
+            background: #1e3a8a;
             color: white;
             font-weight: 600;
             padding: 0.75rem 1rem;
@@ -60,7 +61,7 @@
             transition: all 0.2s ease;
             width: 100%;
         }
-        .btn-stripe:hover { background: #5548e0; }
+        .btn-paddle:hover { background: #1e40af; }
         .btn-razorpay {
             background: #0c8b6a;
             color: white;
@@ -119,7 +120,7 @@
         </div>
 
         <!-- ============================================================
-        ROI REPORT BANNER (The "Value Bomb")
+        ROI REPORT BANNER
         ============================================================ -->
         <div class="card-dark mb-8 border border-green-500/20 bg-green-500/5">
             <h2 class="text-xl font-bold text-green-400">🛡️ Your 14-Day Audit Summary</h2>
@@ -146,20 +147,20 @@
         </div>
 
         <!-- ============================================================
-        BILLING CARD (DUAL PAYMENT: STRIPE + RAZORPAY)
+        BILLING CARD (PADDLE + RAZORPAY)
         ============================================================ -->
         <div class="card-dark mb-8 border border-[#1a1a1a]">
             <p class="text-[#6b7280] text-sm">Billing</p>
             <p class="text-xl font-bold mt-1 text-white">Billing Status: Inactive</p>
 
             <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- LEFT: STRIPE (International) -->
+                <!-- LEFT: PADDLE (International) -->
                 <div class="bg-gray-800/30 p-4 rounded-xl border border-gray-700">
                     <p class="text-sm font-semibold text-white">🌍 International</p>
                     <p class="text-xs text-gray-400 mb-3">Credit / Debit Cards (USD)</p>
                     <form action="/create-checkout-session" method="POST">
                         <input type="hidden" name="plan" value="monthly">
-                        <button type="submit" class="btn-stripe">💳 Pay $29/mo</button>
+                        <button type="submit" class="btn-paddle">💳 Pay $29/mo</button>
                     </form>
                     <p class="text-xs text-gray-500 mt-2">USA • UK • Europe • Australia</p>
                 </div>
@@ -181,7 +182,7 @@
                     <div class="flex gap-2 mt-2">
                         <form action="/create-checkout-session" method="POST">
                             <input type="hidden" name="plan" value="team_annual">
-                            <button type="submit" class="btn-stripe text-xs px-3 py-2">$1,999 (Stripe)</button>
+                            <button type="submit" class="btn-paddle text-xs px-3 py-2">$1,999 (Paddle)</button>
                         </form>
                         <button onclick="initiateRazorpayPayment('team_annual')" class="btn-razorpay text-xs px-3 py-2">₹1,65,000 (Razorpay)</button>
                     </div>
@@ -192,7 +193,7 @@
                     <div class="flex gap-2 mt-2">
                         <form action="/create-checkout-session" method="POST">
                             <input type="hidden" name="plan" value="individual_biennial">
-                            <button type="submit" class="btn-stripe text-xs px-3 py-2">$290 (Stripe)</button>
+                            <button type="submit" class="btn-paddle text-xs px-3 py-2">$290 (Paddle)</button>
                         </form>
                         <button onclick="initiateRazorpayPayment('individual_biennial')" class="btn-razorpay text-xs px-3 py-2">₹24,000 (Razorpay)</button>
                     </div>
@@ -320,8 +321,8 @@
         <div class="max-w-7xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center">
             <p class="text-[#4b5563] text-sm">© 2026 Aegis. All rights reserved.</p>
             <div class="flex space-x-6 mt-4 md:mt-0 text-[#4b5563] text-sm">
+                <a href="/terms" class="hover:text-white transition">Terms</a>
                 <a href="#" class="hover:text-white transition">Privacy</a>
-                <a href="#" class="hover:text-white transition">Terms</a>
             </div>
         </div>
     </footer>

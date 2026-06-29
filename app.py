@@ -1273,6 +1273,77 @@ def dashboard():
     return html
 
 # ============================================================
+# TERMS & CONDITIONS PAGE
+# ============================================================
+@app.route("/terms")
+def terms():
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head><title>Aegis - Terms & Conditions</title>
+    <style>
+        body { background: #0a0a0a; color: #e5e7eb; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; line-height: 1.7; }
+        h1, h2 { color: white; }
+        h1 { font-size: 2.5rem; border-bottom: 1px solid #1a1a1a; padding-bottom: 0.5rem; }
+        hr { border-color: #1a1a1a; margin: 2rem 0; }
+        a { color: #3b82f6; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .back { display: inline-block; margin-top: 2rem; background: #1a1a1a; padding: 0.75rem 1.5rem; border-radius: 0.5rem; border: 1px solid #2a2a2a; }
+        .back:hover { background: #2a2a2a; }
+        .highlight { color: #3b82f6; font-weight: 600; }
+    </style>
+    </head>
+    <body>
+    <h1>Terms & Conditions</h1>
+    <p><em>Last updated: June 29, 2026</em></p>
+    <hr>
+
+    <h2>1. Acceptance of Terms</h2>
+    <p>By using Aegis ("the Service"), you agree to be bound by these Terms. If you do not agree, do not use the Service.</p>
+
+    <h2>2. Description of Service</h2>
+    <p>Aegis provides an AI-powered code review and testing service that integrates with GitHub. It analyzes code changes, generates tests, suggests fixes, and improves code quality. The Service is provided "as is" and "as available".</p>
+
+    <h2>3. User Accounts</h2>
+    <p>You must create an account to use the Service. You are responsible for maintaining the security of your account and all activity that occurs under it. You agree to provide accurate and complete information. You may not share your account credentials with others.</p>
+
+    <h2>4. Payments & Refunds</h2>
+    <p>All payments are processed through <span class="highlight">Paddle</span> (international) or <span class="highlight">Razorpay</span> (India). Prices are in USD unless stated otherwise. Subscriptions are billed monthly or annually. We offer a 14-day free trial. Refunds are handled on a case‑by‑case basis – please contact us at <a href="mailto:hello@aegis.tech">hello@aegis.tech</a> for refund requests.</p>
+
+    <h2>5. BYOK (Bring Your Own Key)</h2>
+    <p>You may use your own API keys for AI providers (e.g., OpenAI, DeepSeek, Anthropic). You are solely responsible for the costs and usage of those services. We never store your API keys in plaintext – they are encrypted in our database.</p>
+
+    <h2>6. Intellectual Property</h2>
+    <p>All code, content, and materials provided by the Service are owned by Aegis. You retain ownership of your own code and data. By using the Service, you grant us a limited license to access your GitHub repositories solely for the purpose of providing the Service.</p>
+
+    <h2>7. Data Security</h2>
+    <p>We take reasonable measures to protect your data. However, you acknowledge that no system is 100% secure. We are not liable for unauthorized access, data breaches, or loss of data. We do not store your source code permanently – only diffs for analysis.</p>
+
+    <h2>8. Acceptable Use</h2>
+    <p>You agree not to misuse the Service. This includes, but is not limited to: attempting to bypass security, using the Service for illegal purposes, or interfering with the Service's integrity.</p>
+
+    <h2>9. Termination</h2>
+    <p>We may suspend or terminate your account if you violate these Terms or misuse the Service. You may cancel your subscription at any time via your dashboard or by contacting us. Upon termination, your access to the Service will be revoked.</p>
+
+    <h2>10. Limitation of Liability</h2>
+    <p>To the fullest extent permitted by law, Aegis is not liable for any indirect, incidental, or consequential damages arising from your use of the Service, including but not limited to loss of profits, data, or business interruption.</p>
+
+    <h2>11. Changes to Terms</h2>
+    <p>We may update these Terms from time to time. We will notify you of material changes via email or by posting a notice on the Service. Continued use after changes constitutes acceptance.</p>
+
+    <h2>12. Governing Law</h2>
+    <p>These Terms are governed by the laws of India, without regard to its conflict of laws principles. Any disputes shall be resolved in the courts of Mumbai, India.</p>
+
+    <h2>13. Contact</h2>
+    <p>For any questions, please email <a href="mailto:hello@aegis.tech">hello@aegis.tech</a>.</p>
+
+    <hr>
+    <a href="/dashboard" class="back">← Back to Dashboard</a>
+    </body>
+    </html>
+    '''
+
+# ============================================================
 # WEBHOOK (with Redis caching)
 # ============================================================
 @app.route("/webhook", methods=["POST"])
