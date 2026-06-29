@@ -551,7 +551,7 @@ jobs:
     return Response(yaml, mimetype='text/yaml', headers={"Content-Disposition": "attachment; filename=aegis.yml"})
 
 # ============================================================
-# GITHUB OAUTH ROUTES (FIXED: hardcoded redirect_uri)
+# GITHUB OAUTH ROUTES (FIXED: hardcoded redirect_uri + logging)
 # ============================================================
 @app.route("/github-oauth/authorize")
 def github_oauth_authorize():
@@ -561,7 +561,6 @@ def github_oauth_authorize():
         return redirect(url_for('login'))
     
     scope = "repo,user"
-    # Hardcoded redirect URI – matches GitHub OAuth app settings
     redirect_uri = f"{YOUR_DOMAIN}/github-oauth/callback"
     auth_url = (
         f"https://github.com/login/oauth/authorize"
@@ -579,34 +578,37 @@ def github_oauth_callback():
         return redirect(url_for('login'))
     
     code = request.args.get('code')
+    print(f"🔍 Callback received code: {code}")  # DEBUG
     if not code:
         flash('GitHub authorization failed: no code received.')
         return redirect(url_for('dashboard'))
     
-    # Exchange code for access token
     token_url = "https://github.com/login/oauth/access_token"
     payload = {
         'client_id': GITHUB_CLIENT_ID,
         'client_secret': GITHUB_CLIENT_SECRET,
         'code': code,
-        'redirect_uri': f"{YOUR_DOMAIN}/github-oauth/callback"  # Must match the one in the authorize request
+        'redirect_uri': f"{YOUR_DOMAIN}/github-oauth/callback"
     }
+    print(f"🔑 Exchanging code for token with redirect_uri: {payload['redirect_uri']}")  # DEBUG
     headers = {'Accept': 'application/json'}
     try:
         response = requests.post(token_url, data=payload, headers=headers)
         response.raise_for_status()
         data = response.json()
         access_token = data.get('access_token')
+        print(f"🔑 Access token received: {access_token[:10] if access_token else 'None'}...")  # DEBUG
         if not access_token:
             flash('Could not retrieve access token.')
             return redirect(url_for('dashboard'))
     except Exception as e:
         logger.error(f"GitHub OAuth error: {e}")
+        print(f"❌ GitHub OAuth exception: {e}")  # DEBUG
         flash('GitHub authentication failed.')
         return redirect(url_for('dashboard'))
     
-    # Save token to user in DB
     user_id = session['user_id']
+    print(f"👤 Saving token for user_id: {user_id}")  # DEBUG
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('UPDATE users SET github_token = ? WHERE id = ?', (access_token, user_id))
