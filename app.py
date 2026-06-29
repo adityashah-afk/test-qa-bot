@@ -681,21 +681,24 @@ def signup():
             return redirect(url_for('signup'))
         finally:
             conn.close()
-    # GET request: return the signup form
-    return '''
+    # GET request: return the signup form WITH flash messages
+    messages = get_flashed_messages()
+    flash_html = ''.join(f'<p style="color: #f87171; background: #1a1a1a; padding: 0.75rem; border-radius: 0.5rem; margin-bottom: 1rem; border: 1px solid #dc2626;">{msg}</p>' for msg in messages)
+    return f'''
         <!DOCTYPE html>
         <html><head><title>Aegis - Sign Up</title><script src="https://cdn.tailwindcss.com"></script>
-        <style>body { background: #000000; } .card { background: #0a0a0a; border: 1px solid #1a1a1a; } 
-        .input-dark { background: #000000; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; }
-        .input-dark:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
-        .btn-primary { background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }
-        .btn-primary:hover { background: #2563eb; }
-        .btn-social { background: #1a1a1a; border: 1px solid #2a2a2a; color: white; font-weight: 500; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; display: block; text-align: center; }
-        .btn-social:hover { background: #2a2a2a; border-color: #3b82f6; }
+        <style>body {{ background: #000000; }} .card {{ background: #0a0a0a; border: 1px solid #1a1a1a; }} 
+        .input-dark {{ background: #000000; border: 1px solid #1a1a1a; color: #e5e7eb; padding: 0.75rem 1rem; border-radius: 0.5rem; width: 100%; }}
+        .input-dark:focus {{ outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }}
+        .btn-primary {{ background: #3b82f6; color: white; font-weight: 600; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; }}
+        .btn-primary:hover {{ background: #2563eb; }}
+        .btn-social {{ background: #1a1a1a; border: 1px solid #2a2a2a; color: white; font-weight: 500; padding: 0.75rem; border-radius: 0.5rem; width: 100%; transition: 0.2s; display: block; text-align: center; }}
+        .btn-social:hover {{ background: #2a2a2a; border-color: #3b82f6; }}
         </style>
         </head><body class="min-h-screen flex items-center justify-center">
         <div class="card p-8 rounded-2xl max-w-md w-full">
         <h1 class="text-2xl font-bold mb-6 text-white">Start Your 14-Day Trial</h1>
+        {flash_html}
         <form method="POST">
         <input type="text" name="full_name" placeholder="Full Name" class="input-dark mb-4" />
         <input type="email" name="email" placeholder="Work Email (e.g., name@company.com)" class="input-dark mb-4" required />
