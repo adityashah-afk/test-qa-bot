@@ -48,7 +48,7 @@ except Exception as e:
     logger.warning(f"⚠️ Redis connection failed: {e}. Caching disabled.")
 
 # ============================================================
-# Email Imports (SendGrid)
+# Email Imports (SendGrid) – not used right now
 # ============================================================
 import sendgrid
 from sendgrid.helpers.mail import Mail
@@ -102,32 +102,15 @@ GITHUB_USER_URL = "https://api.github.com/user"
 YOUR_DOMAIN = os.getenv("YOUR_DOMAIN", "https://test-qa-bot-production.up.railway.app")
 
 # ============================================================
-# Email Setup (SendGrid)
+# Email Setup (SendGrid – temporarily disabled)
 # ============================================================
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "hello@aegis.com")
 
 def send_verification_email(email, code):
-    if not SENDGRID_API_KEY:
-        logger.warning("SendGrid API key not set. Skipping email.")
-        return False
-    try:
-        sg = sendgrid.SendGridAPIClient(api_key=SENDGRID_API_KEY)
-        message = Mail(
-            from_email=FROM_EMAIL,
-            to_emails=email,
-            subject="Your Aegis Verification Code",
-            html_content=f"""
-            <h1>Welcome to Aegis!</h1>
-            <p>Your verification code is: <strong>{code}</strong></p>
-            <p>This code expires in 10 minutes.</p>
-            """
-        )
-        response = sg.send(message)
-        return response.status_code == 202
-    except Exception as e:
-        logger.error(f"Failed to send email: {e}")
-        return False
+    # Disabled – email verification bypassed
+    # We keep the function to avoid errors, but it doesn't send emails.
+    return True
 
 # ============================================================
 # Database (SQLite with WAL mode & timeout for concurrency)
@@ -604,25 +587,22 @@ def signup():
         conn = get_db_connection()
         c = conn.cursor()
         try:
+            # Insert user with email_verified = 1 (bypass verification)
             c.execute('''
                 INSERT INTO users (full_name, email, company, username, password_hash, trial_expires_at, referral_code, email_verified)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
             ''', (full_name, email, company, username, password_hash, trial_expiry, my_code))
             user_id = c.lastrowid
-            # Referral logic removed to avoid NameError – you can re-enable later
-            # if referral_code:
-            #     referrer = get_user_by_referral_code(referral_code)
-            #     if referrer:
-            #         c.execute('UPDATE users SET referred_by = ? WHERE id = ?', (referrer[0], user_id))
-            #         add_referral(referrer[0], user_id)
+            # Referral logic removed – you can re-enable later
             c.execute('''
                 INSERT INTO email_verifications (email, code, expires_at)
                 VALUES (?, ?, ?)
             ''', (email, verif_code, verif_expires))
             conn.commit()
-            send_verification_email(email, verif_code)
-            flash('Account created! Please check your email for the verification code.')
-            return redirect(url_for('verify_email', email=email))
+            # Email sending disabled – bypass verification
+            # send_verification_email(email, verif_code)
+            flash('Account created! You can now log in.')
+            return redirect(url_for('login'))
         except sqlite3.IntegrityError:
             flash('Username or Email already exists.')
             return redirect(url_for('signup'))
@@ -662,6 +642,8 @@ def signup():
 
 @app.route("/verify-email", methods=['GET', 'POST'])
 def verify_email():
+    # This route is still available but not used because email verification is bypassed.
+    # If a user tries to verify, we'll just log them in.
     email = request.args.get('email') or request.form.get('email')
     if request.method == 'POST':
         code = request.form.get('code')
@@ -719,7 +701,7 @@ def resend_verification():
     ''', (email, code, verif_expires))
     conn.commit()
     conn.close()
-    send_verification_email(email, code)
+    # send_verification_email(email, code)  # disabled
     flash('New code sent! Please check your email.')
     return redirect(url_for('verify_email', email=email))
 
@@ -731,6 +713,7 @@ def login():
         password = request.form.get('password')
         user = get_user(username)
         if user and check_password_hash(user[2], password):
+            # Email verification is bypassed – user[3] is always 1 now
             if not user[3]:
                 flash('Please verify your email first.')
                 return redirect(url_for('verify_email', email=user[3]))
