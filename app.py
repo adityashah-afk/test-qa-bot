@@ -551,23 +551,27 @@ jobs:
     return Response(yaml, mimetype='text/yaml', headers={"Content-Disposition": "attachment; filename=aegis.yml"})
 
 # ============================================================
-# GITHUB OAUTH ROUTES (FIXED: hardcoded redirect_uri + logging)
+# GITHUB OAUTH ROUTES (with debug logging)
 # ============================================================
 @app.route("/github-oauth/authorize")
 def github_oauth_authorize():
     """Redirect user to GitHub for OAuth authorization."""
+    print(f"👤 Session user_id: {session.get('user_id')}")  # DEBUG
     if 'user_id' not in session:
         flash('Please log in first.')
         return redirect(url_for('login'))
     
     scope = "repo,user"
     redirect_uri = f"{YOUR_DOMAIN}/github-oauth/callback"
+    print(f"🔑 GITHUB_CLIENT_ID: {GITHUB_CLIENT_ID}")  # DEBUG
+    print(f"🔑 YOUR_DOMAIN: {YOUR_DOMAIN}")  # DEBUG
     auth_url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={GITHUB_CLIENT_ID}"
         f"&redirect_uri={redirect_uri}"
         f"&scope={scope}"
     )
+    print(f"🔀 Redirecting to: {auth_url}")  # DEBUG
     return redirect(auth_url)
 
 @app.route("/github-oauth/callback")
