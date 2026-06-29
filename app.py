@@ -551,6 +551,72 @@ jobs:
     return Response(yaml, mimetype='text/yaml', headers={"Content-Disposition": "attachment; filename=aegis.yml"})
 
 # ============================================================
+# GITHUB OAUTH ROUTES (FIXES "Not Found" error)
+# ============================================================
+@app.route("/github-oauth/authorize")
+def github_oauth_authorize():
+    """Redirect user to GitHub for OAuth authorization."""
+    if 'user_id' not in session:
+        flash('Please log in first.')
+        return redirect(url_for('login'))
+    
+    # GitHub OAuth URL
+    scope = "repo,user"
+    redirect_uri = url_for('github_oauth_callback', _external=True)
+    auth_url = (
+        f"https://github.com/login/oauth/authorize"
+        f"?client_id={GITHUB_CLIENT_ID}"
+        f"&redirect_uri={redirect_uri}"
+        f"&scope={scope}"
+    )
+    return redirect(auth_url)
+
+@app.route("/github-oauth/callback")
+def github_oauth_callback():
+    """GitHub OAuth callback – exchange code for token and save to DB."""
+    if 'user_id' not in session:
+        flash('Please log in first.')
+        return redirect(url_for('login'))
+    
+    code = request.args.get('code')
+    if not code:
+        flash('GitHub authorization failed: no code received.')
+        return redirect(url_for('dashboard'))
+    
+    # Exchange code for access token
+    token_url = "https://github.com/login/oauth/access_token"
+    payload = {
+        'client_id': GITHUB_CLIENT_ID,
+        'client_secret': GITHUB_CLIENT_SECRET,
+        'code': code,
+        'redirect_uri': url_for('github_oauth_callback', _external=True)
+    }
+    headers = {'Accept': 'application/json'}
+    try:
+        response = requests.post(token_url, data=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        access_token = data.get('access_token')
+        if not access_token:
+            flash('Could not retrieve access token.')
+            return redirect(url_for('dashboard'))
+    except Exception as e:
+        logger.error(f"GitHub OAuth error: {e}")
+        flash('GitHub authentication failed.')
+        return redirect(url_for('dashboard'))
+    
+    # Save token to user in DB
+    user_id = session['user_id']
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('UPDATE users SET github_token = ? WHERE id = ?', (access_token, user_id))
+    conn.commit()
+    conn.close()
+    
+    flash('✅ GitHub account connected successfully!')
+    return redirect(url_for('dashboard'))
+
+# ============================================================
 # WEBSITE ROUTES (Login, Signup, Dashboard)
 # ============================================================
 def load_html(filename):
@@ -750,7 +816,7 @@ def create_checkout_session():
     plan = request.form.get('plan') or 'monthly'
     price_map = {
         'monthly': os.getenv("PADDLE_PRICE_MONTHLY"),
-        'team_monthly': os.getenv("PADDLE_PRICE_TEAM_MONTHLY"),  # <-- Added for Team monthly
+        'team_monthly': os.getenv("PADDLE_PRICE_TEAM_MONTHLY"),
         'team_annual': os.getenv("PADDLE_PRICE_TEAM_ANNUAL"),
         'individual_biennial': os.getenv("PADDLE_PRICE_INDIVIDUAL_BIENNIAL")
     }
