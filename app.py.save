@@ -1,7 +1,10 @@
-#!/usr/bin/env python3
+    referrer = get_user_by_referral_code(referral_code)
+    if referrer:
+        c.execute('UPDATE users SET referred_by = ? WHERE id = ?', (referrer[0], user_id))
+        add_referral(referrer[0], user_id)#!/usr/bin/env python3
 """
 Aegis - Enterprise Ready Backend
-Supports: Paddle (REST API – International) + Razorpay (India/UPI)
+Supports: Paddle (International) + Razorpay (India/UPI)
 """
 
 import os
@@ -17,6 +20,7 @@ from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, redirect, url_for, session, flash, render_template_string, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 import requests
+import paddle
 import razorpay
 from dotenv import load_dotenv
 load_dotenv()
@@ -48,7 +52,7 @@ except Exception as e:
     logger.warning(f"⚠️ Redis connection failed: {e}. Caching disabled.")
 
 # ============================================================
-# Email Imports (SendGrid – temporarily disabled)
+# Email Imports (SendGrid)
 # ============================================================
 import sendgrid
 from sendgrid.helpers.mail import Mail
@@ -82,10 +86,13 @@ app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
 # ============================================================
 # Config
 # ============================================================
-# Paddle (REST API – no SDK)
+# Paddle
 PADDLE_API_KEY = os.getenv("PADDLE_API_KEY")
 PADDLE_WEBHOOK_SECRET = os.getenv("PADDLE_WEBHOOK_SECRET")
 PADDLE_VENDOR_ID = os.getenv("PADDLE_VENDOR_ID", "")
+
+# Initialize Paddle client
+paddle_client = paddle.Client(api_key=PADDLE_API_KEY) if PADDLE_API_KEY else None
 
 # Razorpay
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID")
@@ -102,14 +109,32 @@ GITHUB_USER_URL = "https://api.github.com/user"
 YOUR_DOMAIN = os.getenv("YOUR_DOMAIN", "https://test-qa-bot-production.up.railway.app")
 
 # ============================================================
-# Email Setup (SendGrid – temporarily disabled)
+# Email Setup (SendGrid)
 # ============================================================
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "hello@aegis.com")
 
 def send_verification_email(email, code):
-    # Disabled – email verification bypassed
-    return True
+    if not SENDGRID_API_KEY:
+        logger.warning("SendGrid API key not set. Skipping email.")
+        return False
+    try:
+        sg = sendgrid.SendGridAPIClient(api_key=SENDGRID_API_KEY)
+        message = Mail(
+            from_email=FROM_EMAIL,
+            to_emails=email,
+            subject="Your Aegis Verification Code",
+            html_content=f"""
+            <h1>Welcome to Aegis!</h1>
+            <p>Your verification code is: <strong>{code}</strong></p>
+            <p>This code expires in 10 minutes.</p>
+            """
+        )
+        response = sg.send(message)
+        return response.status_code == 202
+    except Exception as e:
+        logger.error(f"Failed to send email: {e}")
+        return False
 
 # ============================================================
 # Database (SQLite with WAL mode & timeout for concurrency)
@@ -404,7 +429,7 @@ def add_referral(referrer_id, referred_user_id):
     conn.close()
 
 # ============================================================
-# CRITICAL: Missing function added here
+# ⭐ CRITICAL FIX: The missing function (added here)
 # ============================================================
 def get_user_by_referral_code(code):
     conn = get_db_connection()
@@ -540,7 +565,7 @@ jobs:
           python-version: '3.13'
       - name: Install Aegis
         run: |
-          pip install flask PyGithub openai pytest python-dotenv requests redis sendgrid razorpay
+          pip install flask PyGithub openai pytest python-dotenv stripe requests redis sendgrid razorpay
       - name: Run Aegis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -549,72 +574,6 @@ jobs:
           python app.py
 """
     return Response(yaml, mimetype='text/yaml', headers={"Content-Disposition": "attachment; filename=aegis.yml"})
-
-# ============================================================
-# GITHUB OAUTH ROUTES (FIXED: hardcoded redirect_uri)
-# ============================================================
-@app.route("/github-oauth/authorize")
-def github_oauth_authorize():
-    """Redirect user to GitHub for OAuth authorization."""
-    if 'user_id' not in session:
-        flash('Please log in first.')
-        return redirect(url_for('login'))
-    
-    scope = "repo,user"
-    # Hardcoded redirect URI – matches GitHub OAuth app settings
-    redirect_uri = f"{YOUR_DOMAIN}/github-oauth/callback"
-    auth_url = (
-        f"https://github.com/login/oauth/authorize"
-        f"?client_id={GITHUB_CLIENT_ID}"
-        f"&redirect_uri={redirect_uri}"
-        f"&scope={scope}"
-    )
-    return redirect(auth_url)
-
-@app.route("/github-oauth/callback")
-def github_oauth_callback():
-    """GitHub OAuth callback – exchange code for token and save to DB."""
-    if 'user_id' not in session:
-        flash('Please log in first.')
-        return redirect(url_for('login'))
-    
-    code = request.args.get('code')
-    if not code:
-        flash('GitHub authorization failed: no code received.')
-        return redirect(url_for('dashboard'))
-    
-    # Exchange code for access token
-    token_url = "https://github.com/login/oauth/access_token"
-    payload = {
-        'client_id': GITHUB_CLIENT_ID,
-        'client_secret': GITHUB_CLIENT_SECRET,
-        'code': code,
-        'redirect_uri': f"{YOUR_DOMAIN}/github-oauth/callback"  # Must match the one in the authorize request
-    }
-    headers = {'Accept': 'application/json'}
-    try:
-        response = requests.post(token_url, data=payload, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        access_token = data.get('access_token')
-        if not access_token:
-            flash('Could not retrieve access token.')
-            return redirect(url_for('dashboard'))
-    except Exception as e:
-        logger.error(f"GitHub OAuth error: {e}")
-        flash('GitHub authentication failed.')
-        return redirect(url_for('dashboard'))
-    
-    # Save token to user in DB
-    user_id = session['user_id']
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute('UPDATE users SET github_token = ? WHERE id = ?', (access_token, user_id))
-    conn.commit()
-    conn.close()
-    
-    flash('✅ GitHub account connected successfully!')
-    return redirect(url_for('dashboard'))
 
 # ============================================================
 # WEBSITE ROUTES (Login, Signup, Dashboard)
@@ -654,16 +613,23 @@ def signup():
         try:
             c.execute('''
                 INSERT INTO users (full_name, email, company, username, password_hash, trial_expires_at, referral_code, email_verified)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
             ''', (full_name, email, company, username, password_hash, trial_expiry, my_code))
             user_id = c.lastrowid
+            # Referral logic (now safe because get_user_by_referral_code exists)
+            i#f referral_code:
+                #referrer = get_user_by_referral_code(referral_code)
+                #if referrer:
+                    #c.execute('UPDATE users SET referred_by = ? WHERE id = ?', (referrer[0], user_id))
+                    #add_referral(referrer[0], user_id)
             c.execute('''
                 INSERT INTO email_verifications (email, code, expires_at)
                 VALUES (?, ?, ?)
             ''', (email, verif_code, verif_expires))
             conn.commit()
-            flash('Account created! You can now log in.')
-            return redirect(url_for('login'))
+            send_verification_email(email, verif_code)
+            flash('Account created! Please check your email for the verification code.')
+            return redirect(url_for('verify_email', email=email))
         except sqlite3.IntegrityError:
             flash('Username or Email already exists.')
             return redirect(url_for('signup'))
@@ -703,7 +669,6 @@ def signup():
 
 @app.route("/verify-email", methods=['GET', 'POST'])
 def verify_email():
-    # This route is still available but not used because email verification is bypassed.
     email = request.args.get('email') or request.form.get('email')
     if request.method == 'POST':
         code = request.form.get('code')
@@ -761,6 +726,7 @@ def resend_verification():
     ''', (email, code, verif_expires))
     conn.commit()
     conn.close()
+    send_verification_email(email, code)
     flash('New code sent! Please check your email.')
     return redirect(url_for('verify_email', email=email))
 
@@ -772,6 +738,9 @@ def login():
         password = request.form.get('password')
         user = get_user(username)
         if user and check_password_hash(user[2], password):
+            if not user[3]:
+                flash('Please verify your email first.')
+                return redirect(url_for('verify_email', email=user[3]))
             session['user_id'] = user[0]; session['username'] = user[1]; session.permanent = True
             flash('Logged in successfully.')
             return redirect(url_for('dashboard'))
@@ -803,7 +772,7 @@ def logout():
     session.clear(); flash('Logged out.'); return redirect(url_for('home'))
 
 # ============================================================
-# PADDLE (REST API) – International payments
+# PADDLE CHECKOUT SESSION (International)
 # ============================================================
 @app.route("/create-checkout-session", methods=['POST'])
 def create_checkout_session():
@@ -816,7 +785,6 @@ def create_checkout_session():
     plan = request.form.get('plan') or 'monthly'
     price_map = {
         'monthly': os.getenv("PADDLE_PRICE_MONTHLY"),
-        'team_monthly': os.getenv("PADDLE_PRICE_TEAM_MONTHLY"),
         'team_annual': os.getenv("PADDLE_PRICE_TEAM_ANNUAL"),
         'individual_biennial': os.getenv("PADDLE_PRICE_INDIVIDUAL_BIENNIAL")
     }
@@ -825,24 +793,21 @@ def create_checkout_session():
         return jsonify({"error": "Invalid plan"}), 400
 
     try:
-        url = "https://api.paddle.com/v1/transactions"
-        headers = {
-            "Authorization": f"Bearer {PADDLE_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "items": [{"price_id": price_id, "quantity": 1}],
-            "customer": {"email": user[3]},
-            "custom_data": {"user_id": str(user[0])}
-        }
-        response = requests.post(url, json=payload, headers=headers)
-        if response.status_code != 200:
-            logger.error(f"Paddle API error: {response.text}")
-            return jsonify({"error": "Paddle API error"}), 500
-        data = response.json()
-        checkout_url = data['data']['checkout']['url']
+        transaction = paddle_client.transactions.create(
+            items=[{
+                'price_id': price_id,
+                'quantity': 1
+            }],
+            customer={
+                'email': user[3]
+            },
+            custom_data={
+                'user_id': str(user[0])
+            }
+        )
+        checkout_url = transaction['data']['checkout']['url']
         return jsonify({'url': checkout_url})
-    except Exception as e:
+    except paddle.PaddleError as e:
         logger.error(f"Paddle error: {e}")
         return jsonify({"error": str(e)}), 500
 
@@ -854,28 +819,40 @@ def paddle_webhook():
         return jsonify({"error": "Missing signature"}), 400
 
     try:
-        event = json.loads(payload)
-    except:
-        return jsonify({"error": "Invalid JSON"}), 400
+        paddle_client.verify_webhook_signature(
+            payload=payload,
+            signature_header=signature,
+            secret=PADDLE_WEBHOOK_SECRET
+        )
+    except paddle.exceptions.VerificationError:
+        return jsonify({"error": "Invalid signature"}), 400
 
+    event = json.loads(payload)
     event_type = event.get('event_type')
     data = event.get('data', {})
 
     if event_type == 'transaction.completed':
         user_id = data.get('custom_data', {}).get('user_id')
+        subscription_id = data.get('subscription_id')
         customer_id = data.get('customer_id')
+
         if user_id:
             conn = get_db_connection()
             c = conn.cursor()
-            c.execute('UPDATE users SET subscription_status = "active", stripe_customer_id = ? WHERE id = ?',
-                      (customer_id, int(user_id)))
+            c.execute('''
+                UPDATE users 
+                SET subscription_status = 'active',
+                    stripe_customer_id = ?
+                WHERE id = ?
+            ''', (customer_id, int(user_id)))
             conn.commit()
             conn.close()
             logger.info(f"✅ Paddle payment captured for user {user_id}")
 
     elif event_type == 'subscription.updated':
-        customer_id = data.get('customer_id')
-        status = data.get('status')
+        sub_data = data
+        customer_id = sub_data.get('customer_id')
+        status = sub_data.get('status')
         conn = get_db_connection()
         c = conn.cursor()
         c.execute('UPDATE users SET subscription_status = ? WHERE stripe_customer_id = ?', (status, customer_id))
@@ -883,7 +860,8 @@ def paddle_webhook():
         conn.close()
 
     elif event_type == 'subscription.canceled':
-        customer_id = data.get('customer_id')
+        sub_data = data
+        customer_id = sub_data.get('customer_id')
         conn = get_db_connection()
         c = conn.cursor()
         c.execute('UPDATE users SET subscription_status = "canceled" WHERE stripe_customer_id = ?', (customer_id,))
@@ -1029,7 +1007,7 @@ def audit_logs():
     return html
 
 # ============================================================
-# DASHBOARD (ROI + Scarcity) – with TRIAL FIX
+# DASHBOARD (ROI + Scarcity)
 # ============================================================
 @app.route("/dashboard", methods=['GET', 'POST'])
 def dashboard():
@@ -1038,10 +1016,6 @@ def dashboard():
     user_id = session['user_id']
     user = get_user_by_id(user_id)
     org_id = user[14] if len(user) > 14 else None
-
-    # ============================================================
-    # FIXED TRIAL CHECK – with fallback and auto-set
-    # ============================================================
     trial_expires_at = user[12] if len(user) > 12 else None
     is_expired = True
     days_left = 0
@@ -1053,23 +1027,7 @@ def dashboard():
                 is_expired = False
                 days_left = (expiry - datetime.utcnow()).days
         except:
-            # If parsing fails, treat as not expired and set a 14-day trial
-            is_expired = False
-            days_left = 14
-    else:
-        # No trial expiry set – create one now
-        is_expired = False
-        days_left = 14
-        new_trial = (datetime.utcnow() + timedelta(days=14)).strftime('%Y-%m-%d %H:%M:%S')
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute('UPDATE users SET trial_expires_at = ? WHERE id = ?', (new_trial, user_id))
-        conn.commit()
-        conn.close()
-
-    # ============================================================
-    # END OF TRIAL CHECK
-    # ============================================================
+            pass
 
     if is_expired:
         return render_template_string('''
@@ -1082,141 +1040,32 @@ def dashboard():
         .inventory { color: #facc15; font-weight: bold; }</style>
         </head>
         <body class="min-h-screen flex items-center justify-center">
-        <div class="max-w-5xl w-full mx-auto p-6">
+        <div class="max-w-4xl w-full mx-auto p-6">
         <div class="card-dark text-center">
-        <div class="text-6xl mb-4">⏳</div>
-        <h1 class="text-4xl font-bold text-white">Your Trial Has Ended</h1>
-        <p class="text-[#6b7280] mt-2">Choose a plan to keep using Aegis.</p>
+        <div class="text-6xl mb-4">⏳</div><h1 class="text-4xl font-bold text-white">Your Trial Has Ended</h1>
+        <p class="text-[#6b7280] mt-2">But the party is just getting started.</p>
         <div class="mt-6"><p class="text-sm text-gray-400">⏱️ Prices increase in:</p><div id="countdown" class="countdown">-- : -- : --</div><p class="text-xs text-gray-500">Offer ends Sunday at midnight</p></div>
         <div class="mt-4"><span class="inventory">🔥 28 out of 30</span> <span class="text-gray-400">Founder's Passes remaining</span></div>
-
-        <!-- ============================================================
-        ALL 4 PLANS (GRID)
-        ============================================================ -->
-        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mt-8 max-w-6xl mx-auto">
-
-        <!-- PLAN 1: Individual ($29/mo) -->
-        <div class="bg-gray-900/50 p-6 rounded-xl border border-gray-700">
-            <h3 class="text-lg font-bold text-white">👤 Individual</h3>
-            <p class="text-3xl font-bold text-cyan-400 mt-2">$29</p>
-            <p class="text-xs text-[#6b7280]">/ month • 1 user</p>
-            <ul class="mt-4 text-sm text-gray-300 text-left space-y-1">
-                <li>✅ Unlimited PR reviews</li>
-                <li>✅ Auto-Heal fixes</li>
-                <li>✅ BYOK (Bring Your Own Key)</li>
-            </ul>
-            <form action="/create-checkout-session" method="POST" class="mt-4">
-                <input type="hidden" name="plan" value="monthly">
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-bold transition">Subscribe</button>
-            </form>
-            <!-- Razorpay option for India -->
-            <button onclick="initiateRazorpayPayment('monthly')" class="w-full mt-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-bold transition">Pay ₹2,400</button>
-        </div>
-
-        <!-- PLAN 2: Team ($49/mo) -->
-        <div class="bg-gray-900/50 p-6 rounded-xl border border-gray-700">
-            <h3 class="text-lg font-bold text-white">👥 Team</h3>
-            <p class="text-3xl font-bold text-cyan-400 mt-2">$49</p>
-            <p class="text-xs text-[#6b7280]">/ month • Up to 7 users</p>
-            <ul class="mt-4 text-sm text-gray-300 text-left space-y-1">
-                <li>✅ Everything in Individual</li>
-                <li>✅ Centralized billing</li>
-                <li>✅ Audit logs</li>
-            </ul>
-            <form action="/create-checkout-session" method="POST" class="mt-4">
-                <input type="hidden" name="plan" value="team_monthly">
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-bold transition">Subscribe</button>
-            </form>
-            <button onclick="initiateRazorpayPayment('team_monthly')" class="w-full mt-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-bold transition">Pay ₹4,000</button>
-        </div>
-
-        <!-- PLAN 3: Founder's Pass ($1,999) -->
+        <div class="grid md:grid-cols-2 gap-6 mt-8 max-w-2xl mx-auto">
         <div class="bg-gray-900/50 p-6 rounded-xl border-2 border-cyan-500/50 relative">
-            <span class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-cyan-600 text-white text-xs px-4 py-1 rounded-full">BEST FOR TEAMS</span>
-            <h3 class="text-lg font-bold text-white mt-2">👑 Founder's Pass</h3>
-            <p class="text-3xl font-bold text-cyan-400 mt-2">$1,999</p>
-            <p class="text-xs text-[#6b7280]">1 year • Up to 15 users</p>
-            <ul class="mt-4 text-sm text-gray-300 text-left space-y-1">
-                <li>✅ Unlimited PR reviews</li>
-                <li>✅ Centralized billing</li>
-                <li>✅ Audit logs</li>
-                <li>✅ Priority support</li>
-            </ul>
-            <form action="/create-checkout-session" method="POST" class="mt-4">
-                <input type="hidden" name="plan" value="team_annual">
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-bold transition">Subscribe</button>
-            </form>
-            <button onclick="initiateRazorpayPayment('team_annual')" class="w-full mt-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-bold transition">Pay ₹1,65,000</button>
+        <span class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-cyan-600 text-white text-xs px-4 py-1 rounded-full">BEST FOR TEAMS</span>
+        <h3 class="text-xl font-bold text-white mt-2">👑 Founder's Pass (Team)</h3>
+        <p class="text-4xl font-bold text-cyan-400 mt-2">$1,999</p><p class="text-xs text-[#6b7280]">Up to 15 users • 1 year</p>
+        <ul class="mt-4 text-sm text-gray-300 text-left space-y-1"><li>✅ Unlimited PR reviews</li><li>✅ Centralized Billing</li><li>✅ Audit Logs</li></ul>
+        <a href="/create-checkout-session?plan=team_annual" class="block mt-4 bg-cyan-600 hover:bg-cyan-700 px-6 py-3 rounded-lg font-bold transition">⚡ Upgrade Now</a>
         </div>
-
-        <!-- PLAN 4: Lock-In Pass ($290) -->
         <div class="bg-gray-900/50 p-6 rounded-xl border border-gray-700">
-            <h3 class="text-lg font-bold text-white">🔒 Lock-In Pass</h3>
-            <p class="text-3xl font-bold text-cyan-400 mt-2">$290</p>
-            <p class="text-xs text-[#6b7280]">2 years • Individual</p>
-            <ul class="mt-4 text-sm text-gray-300 text-left space-y-1">
-                <li>✅ Unlimited PR reviews</li>
-                <li>✅ BYOK (Bring Your Own Key)</li>
-                <li>✅ Priority support</li>
-            </ul>
-            <form action="/create-checkout-session" method="POST" class="mt-4">
-                <input type="hidden" name="plan" value="individual_biennial">
-                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-bold transition">Subscribe</button>
-            </form>
-            <button onclick="initiateRazorpayPayment('individual_biennial')" class="w-full mt-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-bold transition">Pay ₹24,000</button>
-        </div>
-
-        </div>
-
+        <h3 class="text-xl font-bold text-white">🚀 Lock-In Pass</h3>
+        <p class="text-4xl font-bold text-cyan-400 mt-2">$290</p><p class="text-xs text-[#6b7280]">2 years for the price of 1</p>
+        <ul class="mt-4 text-sm text-gray-300 text-left space-y-1"><li>✅ Unlimited PR reviews</li><li>✅ Self-hosted key (BYOK)</li><li>✅ Priority support</li></ul>
+        <a href="/create-checkout-session?plan=individual_biennial" class="block mt-4 border border-gray-600 hover:border-cyan-500 px-6 py-3 rounded-lg font-bold transition">🔒 Lock It In</a>
+        </div></div>
         <p class="text-xs text-gray-500 mt-8">*Prices increase on Monday. All plans include a 30-day money-back guarantee.</p>
-        </div>
-        </div>
+        </div></div>
         <script>
         var countDownDate = new Date(); countDownDate.setDate(countDownDate.getDate() + (7 - countDownDate.getDay())); countDownDate.setHours(23,59,59,0);
         var x = setInterval(function() { var now = new Date().getTime(); var distance = countDownDate - now; var hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)); var minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60)); var seconds = Math.floor((distance % (1000 * 60)) / 1000); document.getElementById("countdown").innerHTML = ("0" + hours).slice(-2) + ":" + ("0" + minutes).slice(-2) + ":" + ("0" + seconds).slice(-2); if (distance < 0) { clearInterval(x); document.getElementById("countdown").innerHTML = "OFFER EXPIRED"; } }, 1000);
-        </script>
-
-        <!-- Razorpay script for India payments -->
-        <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-        <script>
-        function initiateRazorpayPayment(plan) {
-            fetch('/create-razorpay-order', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ plan: plan })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.error) {
-                    alert('Error: ' + data.error);
-                    return;
-                }
-                var options = {
-                    "key": data.key_id,
-                    "amount": data.amount,
-                    "currency": data.currency,
-                    "name": "Aegis",
-                    "description": "AI QA Engineer Subscription",
-                    "order_id": data.order_id,
-                    "handler": function (response) {
-                        alert("✅ Payment successful! Your subscription is now active.");
-                        window.location.reload();
-                    },
-                    "modal": {
-                        "ondismiss": function () {
-                            alert("Payment cancelled.");
-                        }
-                    }
-                };
-                var rzp = new Razorpay(options);
-                rzp.open();
-            })
-            .catch(err => {
-                alert('Error initiating payment: ' + err.message);
-            });
-        }
-        </script>
-        </body></html>
+        </script></body></html>
         ''')
 
     # ROI DASHBOARD
@@ -1528,3 +1377,10 @@ def webhook():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)
+def get_user_by_referral_code(code):
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT * FROM users WHERE referral_code = ?', (code,))
+    user = c.fetchone()
+    conn.close()
+    return user
