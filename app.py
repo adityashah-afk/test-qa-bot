@@ -466,70 +466,67 @@ def health_check():
     return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
 
 # ============================================================
-# TRY-IT-NOW DEMO (FIXED)
+# TRY-IT-NOW DEMO (CLEAN VERSION – NO SYNTAX ERRORS)
 # ============================================================
 @app.route("/try", methods=['GET', 'POST'])
 def try_endpoint():
     if request.method == 'GET':
         return '''
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Aegis - Try It Now</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-            <style>
-                body { background: #0a0a0a; color: white; font-family: sans-serif; }
-                .container { max-width: 800px; margin: 50px auto; padding: 20px; }
-                textarea { width: 100%; height: 200px; background: #1a1a1a; border: 1px solid #2a2a2a; color: white; padding: 10px; border-radius: 8px; font-family: monospace; }
-                button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; }
-                #result { margin-top: 20px; white-space: pre-wrap; background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px solid #2a2a2a; display: none; }
-                .btn-secondary { background: #1a1a1a; color: white; border: 1px solid #2a2a2a; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; text-decoration: none; display: inline-block; }
-                .btn-secondary:hover { background: #2a2a2a; }
-                .flex { display: flex; gap: 10px; flex-wrap: wrap; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>⚡ Try Aegis</h1>
-                <p>Paste your Python code below and see Aegis find edge‑case bugs instantly.</p>
-                <form id="try-form">
-                    <textarea id="code" placeholder="def divide(a,b): return a/b" required></textarea>
-                    <br><br>
-                    <div class="flex">
-                        <button type="submit">Analyze Code</button>
-                        <a href="/download-workflow" class="btn-secondary">📥 Download GitHub Workflow</a>
-                    </div>
-                </form>
-                <div id="result"></div>
-            </div>
-            <script>
-                document.getElementById('try-form').addEventListener('submit', async function(e) {
-                    e.preventDefault();
-                    const code = document.getElementById('code').value;
-                    if (!code.trim()) return;
-                    const resultDiv = document.getElementById('result');
-                    resultDiv.style.display = 'block';
-                    resultDiv.textContent = '⏳ Analyzing...';
-                    try {
-                        const resp = await fetch('/try', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ code: code })
-                        });
-                        const data = await resp.json();
-                        if (data.error) {
-                            resultDiv.textContent = '❌ ' + data.error;
-                        } else {
-                            resultDiv.textContent = data.diff + '\n\n✅ ' + data.message;
-                        }
-                    } catch (err) {
-                        resultDiv.textContent = '❌ Error: ' + err.message;
-                    }
-                });
-            </script>
-        </body>
-        </html>
-        '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Aegis - Try It Now</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0a0a0a; color: #e5e7eb; font-family: sans-serif; }
+        .container { max-width: 800px; margin: 40px auto; padding: 20px; }
+        textarea { width: 100%; height: 200px; background: #1a1a1a; border: 1px solid #2a2a2a; color: white; padding: 10px; border-radius: 8px; font-family: monospace; }
+        button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        #result { margin-top: 20px; white-space: pre-wrap; background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px solid #2a2a2a; display: none; }
+        .btn-secondary { background: #1a1a1a; color: white; border: 1px solid #2a2a2a; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; text-decoration: none; display: inline-block; }
+        .flex { display: flex; gap: 10px; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>⚡ Try Aegis</h1>
+    <p>Paste your Python code below and see Aegis find edge-case bugs instantly.</p>
+    <form id="try-form">
+        <textarea id="code" placeholder="def divide(a,b): return a/b" required></textarea>
+        <br><br>
+        <div class="flex">
+            <button type="submit">Analyze Code</button>
+            <a href="/download-workflow" class="btn-secondary">📥 Download GitHub Workflow</a>
+        </div>
+    </form>
+    <div id="result"></div>
+</div>
+<script>
+    document.getElementById('try-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var code = document.getElementById('code').value;
+        if (!code.trim()) return;
+        var resultDiv = document.getElementById('result');
+        resultDiv.style.display = 'block';
+        resultDiv.textContent = '⏳ Analyzing...';
+        fetch('/try', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: code })
+        })
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
+            if (data.error) resultDiv.textContent = '❌ ' + data.error;
+            else resultDiv.textContent = data.diff + '\n\n✅ ' + data.message;
+        })
+        .catch(function(err) {
+            resultDiv.textContent = '❌ Error: ' + err.message;
+        });
+    });
+</script>
+</body>
+</html>
+'''
     elif request.method == 'POST':
         data = request.get_json()
         code = data.get('code', '')
@@ -1190,26 +1187,26 @@ def dashboard():
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ plan: plan })
             })
-            .then(response => response.json())
-            .then(data => {
+            .then(function(response) { return response.json(); })
+            .then(function(data) {
                 if (data.error) { alert('Error: ' + data.error); return; }
                 var options = {
-                    "key": data.key_id,
-                    "amount": data.amount,
-                    "currency": data.currency,
-                    "name": "Aegis",
-                    "description": "AI QA Engineer Subscription",
-                    "order_id": data.order_id,
-                    "handler": function (response) {
+                    key: data.key_id,
+                    amount: data.amount,
+                    currency: data.currency,
+                    name: "Aegis",
+                    description: "AI QA Engineer Subscription",
+                    order_id: data.order_id,
+                    handler: function (response) {
                         alert("✅ Payment successful! Your subscription is now active.");
                         window.location.reload();
                     },
-                    "modal": { "ondismiss": function () { alert("Payment cancelled."); } }
+                    modal: { ondismiss: function () { alert("Payment cancelled."); } }
                 };
                 var rzp = new Razorpay(options);
                 rzp.open();
             })
-            .catch(err => { alert('Error initiating payment: ' + err.message); });
+            .catch(function(err) { alert('Error initiating payment: ' + err.message); });
         }
         </script>
         </body></html>
