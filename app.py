@@ -22,6 +22,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ============================================================
+# SENTRY (Error Monitoring) – ADDED
+# ============================================================
+import sentry_sdk
+from sentry_sdk.integrations.flask import FlaskIntegration
+
+sentry_sdk.init(
+    dsn=os.getenv("SENTRY_DSN"),
+    integrations=[FlaskIntegration()],
+    traces_sample_rate=1.0,
+    environment="production",
+)
+
+# ============================================================
 # LOGGING SETUP
 # ============================================================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -537,7 +550,7 @@ jobs:
           python-version: '3.13'
       - name: Install Aegis
         run: |
-          pip install flask PyGithub openai pytest python-dotenv requests redis sendgrid razorpay
+          pip install flask PyGithub openai pytest python-dotenv requests redis sendgrid razorpay sentry-sdk
       - name: Run Aegis
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
