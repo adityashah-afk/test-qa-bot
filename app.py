@@ -466,12 +466,13 @@ def health_check():
     return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
 
 # ============================================================
-# TRY-IT-NOW DEMO (CLEAN VERSION – NO SYNTAX ERRORS)
+# TRY-IT-NOW DEMO (COMPLETELY CLEAN – NO HIDDEN CHARACTERS)
 # ============================================================
 @app.route("/try", methods=['GET', 'POST'])
 def try_endpoint():
     if request.method == 'GET':
-        return '''
+        # Use a plain string without any special Unicode characters
+        html = '''
 <!DOCTYPE html>
 <html>
 <head>
@@ -489,44 +490,55 @@ def try_endpoint():
 </head>
 <body>
 <div class="container">
-    <h1>⚡ Try Aegis</h1>
+    <h1>Try Aegis</h1>
     <p>Paste your Python code below and see Aegis find edge-case bugs instantly.</p>
     <form id="try-form">
         <textarea id="code" placeholder="def divide(a,b): return a/b" required></textarea>
         <br><br>
         <div class="flex">
             <button type="submit">Analyze Code</button>
-            <a href="/download-workflow" class="btn-secondary">📥 Download GitHub Workflow</a>
+            <a href="/download-workflow" class="btn-secondary">Download GitHub Workflow</a>
         </div>
     </form>
     <div id="result"></div>
 </div>
 <script>
-    document.getElementById('try-form').addEventListener('submit', function(e) {
-        e.preventDefault();
-        var code = document.getElementById('code').value;
-        if (!code.trim()) return;
+    document.addEventListener('DOMContentLoaded', function() {
+        var form = document.getElementById('try-form');
         var resultDiv = document.getElementById('result');
-        resultDiv.style.display = 'block';
-        resultDiv.textContent = '⏳ Analyzing...';
-        fetch('/try', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code: code })
-        })
-        .then(function(response) { return response.json(); })
-        .then(function(data) {
-            if (data.error) resultDiv.textContent = '❌ ' + data.error;
-            else resultDiv.textContent = data.diff + '\n\n✅ ' + data.message;
-        })
-        .catch(function(err) {
-            resultDiv.textContent = '❌ Error: ' + err.message;
+        var codeArea = document.getElementById('code');
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            var code = codeArea.value.trim();
+            if (code === '') return;
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = 'Analyzing...';
+            fetch('/try', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: code })
+            })
+            .then(function(response) {
+                return response.json();
+            })
+            .then(function(data) {
+                if (data.error) {
+                    resultDiv.textContent = 'Error: ' + data.error;
+                } else {
+                    resultDiv.textContent = data.diff + '\n\n' + data.message;
+                }
+            })
+            .catch(function(err) {
+                resultDiv.textContent = 'Error: ' + err.message;
+            });
         });
     });
 </script>
 </body>
 </html>
 '''
+        return html
     elif request.method == 'POST':
         data = request.get_json()
         code = data.get('code', '')
@@ -539,9 +551,9 @@ def try_endpoint():
         engine.load_code_from_string(code)
         passed, fixed_code, diff_output = engine.run_full_loop()
         if diff_output:
-            return jsonify({'diff': diff_output, 'message': 'Fix generated. ' + ('✅ PASSED' if passed else '❌ FAILED (Needs Review)')})
+            return jsonify({'diff': diff_output, 'message': 'Fix generated. ' + ('PASSED' if passed else 'FAILED (Needs Review)')})
         else:
-            return jsonify({'diff': 'No changes needed (or mock mode limited)', 'message': '✅ Code looks good (mock mode)'})
+            return jsonify({'diff': 'No changes needed (or mock mode limited)', 'message': 'Code looks good (mock mode)'})
 
 # ============================================================
 # GITHUB WORKFLOW GENERATOR
