@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ============================================================
-# SENTRY (Error Monitoring) – ADDED
+# SENTRY (Error Monitoring)
 # ============================================================
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
@@ -466,58 +466,75 @@ def health_check():
     return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
 
 # ============================================================
-# TRY-IT-NOW DEMO
+# TRY-IT-NOW DEMO (FIXED)
 # ============================================================
 @app.route("/try", methods=['GET', 'POST'])
 def try_endpoint():
     if request.method == 'GET':
         return '''
         <!DOCTYPE html>
-        <html><head><title>Aegis - Try It Now</title><script src="https://cdn.tailwindcss.com"></script>
-        <style>body { background: #0a0a0a; color: white; font-family: sans-serif; }
-        .container { max-width: 800px; margin: 50px auto; padding: 20px; }
-        textarea { width: 100%; height: 200px; background: #1a1a1a; border: 1px solid #2a2a2a; color: white; padding: 10px; border-radius: 8px; font-family: monospace; }
-        button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; }
-        #result { margin-top: 20px; white-space: pre-wrap; background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px solid #2a2a2a; display: none; }
-        .btn-secondary { background: #1a1a1a; color: white; border: 1px solid #2a2a2a; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; text-decoration: none; display: inline-block; }
-        .btn-secondary:hover { background: #2a2a2a; }
-        .flex { display: flex; gap: 10px; flex-wrap: wrap; }
-        </style>
-        </head><body>
-        <div class="container">
-        <h1>⚡ Try Aegis</h1>
-        <p>Paste your Python code below and see Aegis find edge-case bugs instantly.</p>
-        <form id="try-form">
-        <textarea id="code" placeholder="def divide(a,b): return a/b" required></textarea>
-        <br><br>
-        <div class="flex">
-        <button type="submit">Analyze Code</button>
-        <a href="/download-workflow" class="btn-secondary">📥 Download GitHub Workflow</a>
-        </div>
-        </form>
-        <div id="result"></div>
-        </div>
-        <script>
-        document.getElementById('try-form').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const code = document.getElementById('code').value;
-            if (!code.trim()) return;
-            const resultDiv = document.getElementById('result');
-            resultDiv.style.display = 'block';
-            resultDiv.textContent = '⏳ Analyzing...';
-            try {
-                const resp = await fetch('/try', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
-                const data = await resp.json();
-                if (data.error) { resultDiv.textContent = '❌ ' + data.error; }
-                else { resultDiv.textContent = data.diff + '\n\n✅ ' + data.message; }
-            } catch (err) { resultDiv.textContent = '❌ Error: ' + err.message; }
-        });
-        </script></body></html>
+        <html>
+        <head>
+            <title>Aegis - Try It Now</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <style>
+                body { background: #0a0a0a; color: white; font-family: sans-serif; }
+                .container { max-width: 800px; margin: 50px auto; padding: 20px; }
+                textarea { width: 100%; height: 200px; background: #1a1a1a; border: 1px solid #2a2a2a; color: white; padding: 10px; border-radius: 8px; font-family: monospace; }
+                button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; }
+                #result { margin-top: 20px; white-space: pre-wrap; background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px solid #2a2a2a; display: none; }
+                .btn-secondary { background: #1a1a1a; color: white; border: 1px solid #2a2a2a; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: bold; text-decoration: none; display: inline-block; }
+                .btn-secondary:hover { background: #2a2a2a; }
+                .flex { display: flex; gap: 10px; flex-wrap: wrap; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>⚡ Try Aegis</h1>
+                <p>Paste your Python code below and see Aegis find edge‑case bugs instantly.</p>
+                <form id="try-form">
+                    <textarea id="code" placeholder="def divide(a,b): return a/b" required></textarea>
+                    <br><br>
+                    <div class="flex">
+                        <button type="submit">Analyze Code</button>
+                        <a href="/download-workflow" class="btn-secondary">📥 Download GitHub Workflow</a>
+                    </div>
+                </form>
+                <div id="result"></div>
+            </div>
+            <script>
+                document.getElementById('try-form').addEventListener('submit', async function(e) {
+                    e.preventDefault();
+                    const code = document.getElementById('code').value;
+                    if (!code.trim()) return;
+                    const resultDiv = document.getElementById('result');
+                    resultDiv.style.display = 'block';
+                    resultDiv.textContent = '⏳ Analyzing...';
+                    try {
+                        const resp = await fetch('/try', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ code: code })
+                        });
+                        const data = await resp.json();
+                        if (data.error) {
+                            resultDiv.textContent = '❌ ' + data.error;
+                        } else {
+                            resultDiv.textContent = data.diff + '\n\n✅ ' + data.message;
+                        }
+                    } catch (err) {
+                        resultDiv.textContent = '❌ Error: ' + err.message;
+                    }
+                });
+            </script>
+        </body>
+        </html>
         '''
     elif request.method == 'POST':
         data = request.get_json()
         code = data.get('code', '')
-        if not code: return jsonify({'error': 'No code provided'}), 400
+        if not code:
+            return jsonify({'error': 'No code provided'}), 400
         from ai_qa_engine import QAEngine
         api_key = os.getenv('OPENAI_API_KEY') or os.getenv('DEEPSEEK_API_KEY')
         use_mock = not api_key
@@ -561,42 +578,32 @@ jobs:
     return Response(yaml, mimetype='text/yaml', headers={"Content-Disposition": "attachment; filename=aegis.yml"})
 
 # ============================================================
-# GITHUB OAUTH ROUTES (with debug logging)
+# GITHUB OAUTH ROUTES
 # ============================================================
 @app.route("/github-oauth/authorize")
 def github_oauth_authorize():
-    """Redirect user to GitHub for OAuth authorization."""
-    print(f"👤 Session user_id: {session.get('user_id')}")
     if 'user_id' not in session:
         flash('Please log in first.')
         return redirect(url_for('login'))
-    
     scope = "repo,user"
     redirect_uri = f"{YOUR_DOMAIN}/github-oauth/callback"
-    print(f"🔑 GITHUB_CLIENT_ID: {GITHUB_CLIENT_ID}")
-    print(f"🔑 YOUR_DOMAIN: {YOUR_DOMAIN}")
     auth_url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={GITHUB_CLIENT_ID}"
         f"&redirect_uri={redirect_uri}"
         f"&scope={scope}"
     )
-    print(f"🔀 Redirecting to: {auth_url}")
     return redirect(auth_url)
 
 @app.route("/github-oauth/callback")
 def github_oauth_callback():
-    """GitHub OAuth callback – exchange code for token and save to DB."""
     if 'user_id' not in session:
         flash('Please log in first.')
         return redirect(url_for('login'))
-    
     code = request.args.get('code')
-    print(f"🔍 Callback received code: {code}")
     if not code:
         flash('GitHub authorization failed: no code received.')
         return redirect(url_for('dashboard'))
-    
     token_url = "https://github.com/login/oauth/access_token"
     payload = {
         'client_id': GITHUB_CLIENT_ID,
@@ -604,31 +611,25 @@ def github_oauth_callback():
         'code': code,
         'redirect_uri': f"{YOUR_DOMAIN}/github-oauth/callback"
     }
-    print(f"🔑 Exchanging code for token with redirect_uri: {payload['redirect_uri']}")
     headers = {'Accept': 'application/json'}
     try:
         response = requests.post(token_url, data=payload, headers=headers)
         response.raise_for_status()
         data = response.json()
         access_token = data.get('access_token')
-        print(f"🔑 Access token received: {access_token[:10] if access_token else 'None'}...")
         if not access_token:
             flash('Could not retrieve access token.')
             return redirect(url_for('dashboard'))
     except Exception as e:
         logger.error(f"GitHub OAuth error: {e}")
-        print(f"❌ GitHub OAuth exception: {e}")
         flash('GitHub authentication failed.')
         return redirect(url_for('dashboard'))
-    
     user_id = session['user_id']
-    print(f"👤 Saving token for user_id: {user_id}")
     conn = get_db_connection()
     c = conn.cursor()
     c.execute('UPDATE users SET github_token = ? WHERE id = ?', (access_token, user_id))
     conn.commit()
     conn.close()
-    
     flash('✅ GitHub account connected successfully!')
     return redirect(url_for('dashboard'))
 
@@ -694,7 +695,6 @@ def signup():
             return redirect(url_for('signup'))
         finally:
             conn.close()
-    # GET request: return the signup form WITH flash messages
     messages = get_flashed_messages()
     flash_html = ''.join(f'<p style="color: #f87171; background: #1a1a1a; padding: 0.75rem; border-radius: 0.5rem; margin-bottom: 1rem; border: 1px solid #dc2626;">{msg}</p>' for msg in messages)
     return f'''
@@ -727,7 +727,6 @@ def signup():
 
 @app.route("/verify-email", methods=['GET', 'POST'])
 def verify_email():
-    # This route is still available but not used because email verification is bypassed.
     email = request.args.get('email') or request.form.get('email')
     if request.method == 'POST':
         code = request.form.get('code')
@@ -1066,9 +1065,6 @@ def dashboard():
         return redirect(url_for('logout'))
     org_id = user[19] if len(user) > 19 else None
 
-    # ============================================================
-    # FIXED TRIAL CHECK – with fallback and auto-set
-    # ============================================================
     trial_expires_at = user[16] if len(user) > 16 else None
     is_expired = True
     days_left = 0
@@ -1092,10 +1088,6 @@ def dashboard():
         conn.commit()
         conn.close()
 
-    # ============================================================
-    # END OF TRIAL CHECK
-    # ============================================================
-
     if is_expired:
         return render_template_string('''
         <!DOCTYPE html>
@@ -1115,12 +1107,8 @@ def dashboard():
         <div class="mt-6"><p class="text-sm text-gray-400">⏱️ Prices increase in:</p><div id="countdown" class="countdown">-- : -- : --</div><p class="text-xs text-gray-500">Offer ends Sunday at midnight</p></div>
         <div class="mt-4"><span class="inventory">🔥 28 out of 30</span> <span class="text-gray-400">Founder's Passes remaining</span></div>
 
-        <!-- ============================================================
-        ALL 4 PLANS (GRID)
-        ============================================================ -->
         <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mt-8 max-w-6xl mx-auto">
 
-        <!-- PLAN 1: Individual ($29/mo) -->
         <div class="bg-gray-900/50 p-6 rounded-xl border border-gray-700">
             <h3 class="text-lg font-bold text-white">👤 Individual</h3>
             <p class="text-3xl font-bold text-cyan-400 mt-2">$29</p>
@@ -1128,17 +1116,15 @@ def dashboard():
             <ul class="mt-4 text-sm text-gray-300 text-left space-y-1">
                 <li>✅ Unlimited PR reviews</li>
                 <li>✅ Auto-Heal fixes</li>
-                <li>✅ BYOK (Bring Your Own Key)</li>
+                <li>✅ BYOK</li>
             </ul>
             <form action="/create-checkout-session" method="POST" class="mt-4">
                 <input type="hidden" name="plan" value="monthly">
                 <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-bold transition">Subscribe</button>
             </form>
-            <!-- Razorpay option for India -->
             <button onclick="initiateRazorpayPayment('monthly')" class="w-full mt-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-bold transition">Pay ₹2,400</button>
         </div>
 
-        <!-- PLAN 2: Team ($49/mo) -->
         <div class="bg-gray-900/50 p-6 rounded-xl border border-gray-700">
             <h3 class="text-lg font-bold text-white">👥 Team</h3>
             <p class="text-3xl font-bold text-cyan-400 mt-2">$49</p>
@@ -1155,7 +1141,6 @@ def dashboard():
             <button onclick="initiateRazorpayPayment('team_monthly')" class="w-full mt-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-bold transition">Pay ₹4,000</button>
         </div>
 
-        <!-- PLAN 3: Founder's Pass ($1,999) -->
         <div class="bg-gray-900/50 p-6 rounded-xl border-2 border-cyan-500/50 relative">
             <span class="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-cyan-600 text-white text-xs px-4 py-1 rounded-full">BEST FOR TEAMS</span>
             <h3 class="text-lg font-bold text-white mt-2">👑 Founder's Pass</h3>
@@ -1174,14 +1159,13 @@ def dashboard():
             <button onclick="initiateRazorpayPayment('team_annual')" class="w-full mt-2 bg-cyan-600 hover:bg-cyan-700 px-4 py-2 rounded-lg text-sm font-bold transition">Pay ₹1,65,000</button>
         </div>
 
-        <!-- PLAN 4: Lock-In Pass ($290) -->
         <div class="bg-gray-900/50 p-6 rounded-xl border border-gray-700">
             <h3 class="text-lg font-bold text-white">🔒 Lock-In Pass</h3>
             <p class="text-3xl font-bold text-cyan-400 mt-2">$290</p>
             <p class="text-xs text-[#6b7280]">2 years • Individual</p>
             <ul class="mt-4 text-sm text-gray-300 text-left space-y-1">
                 <li>✅ Unlimited PR reviews</li>
-                <li>✅ BYOK (Bring Your Own Key)</li>
+                <li>✅ BYOK</li>
                 <li>✅ Priority support</li>
             </ul>
             <form action="/create-checkout-session" method="POST" class="mt-4">
@@ -1192,16 +1176,12 @@ def dashboard():
         </div>
 
         </div>
-
         <p class="text-xs text-gray-500 mt-8">*Prices increase on Monday. All plans include a 30-day money-back guarantee.</p>
-        </div>
-        </div>
+        </div></div>
         <script>
         var countDownDate = new Date(); countDownDate.setDate(countDownDate.getDate() + (7 - countDownDate.getDay())); countDownDate.setHours(23,59,59,0);
         var x = setInterval(function() { var now = new Date().getTime(); var distance = countDownDate - now; var hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)); var minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60)); var seconds = Math.floor((distance % (1000 * 60)) / 1000); document.getElementById("countdown").innerHTML = ("0" + hours).slice(-2) + ":" + ("0" + minutes).slice(-2) + ":" + ("0" + seconds).slice(-2); if (distance < 0) { clearInterval(x); document.getElementById("countdown").innerHTML = "OFFER EXPIRED"; } }, 1000);
         </script>
-
-        <!-- Razorpay script for India payments -->
         <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
         <script>
         function initiateRazorpayPayment(plan) {
@@ -1212,10 +1192,7 @@ def dashboard():
             })
             .then(response => response.json())
             .then(data => {
-                if (data.error) {
-                    alert('Error: ' + data.error);
-                    return;
-                }
+                if (data.error) { alert('Error: ' + data.error); return; }
                 var options = {
                     "key": data.key_id,
                     "amount": data.amount,
@@ -1227,18 +1204,12 @@ def dashboard():
                         alert("✅ Payment successful! Your subscription is now active.");
                         window.location.reload();
                     },
-                    "modal": {
-                        "ondismiss": function () {
-                            alert("Payment cancelled.");
-                        }
-                    }
+                    "modal": { "ondismiss": function () { alert("Payment cancelled."); } }
                 };
                 var rzp = new Razorpay(options);
                 rzp.open();
             })
-            .catch(err => {
-                alert('Error initiating payment: ' + err.message);
-            });
+            .catch(err => { alert('Error initiating payment: ' + err.message); });
         }
         </script>
         </body></html>
@@ -1265,22 +1236,18 @@ def dashboard():
     html = html.replace('{{ days_left }}', str(days_left))
 
     referral_count = count_referrals(user_id)
-    referral_link = f"{YOUR_DOMAIN}/signup?ref={user[17]}"  # referral_code at 17
+    referral_link = f"{YOUR_DOMAIN}/signup?ref={user[17]}"
     html = html.replace('{{ referral_link }}', referral_link)
     html = html.replace('{{ referral_count }}', str(referral_count))
     html = html.replace('value="deepseek"', f'value="{user[7]}" selected' if user[7] == 'deepseek' else 'value="deepseek"')
     html = html.replace('placeholder="owner/repo"', f'value="{user[9] or ""}"')
     html = html.replace('placeholder="sk-..."', f'value="{user[8] or ""}"')
     html = html.replace('placeholder="e.g. gpt-4o..."', f'value="{user[15] or ""}"')
-    sub_status = user[13] or 'inactive'  # subscription_status at 13
+    sub_status = user[13] or 'inactive'
     if sub_status == 'active':
         html = html.replace('Billing Status: Inactive', 'Billing Status: ✅ Active')
     else:
         html = html.replace('Billing Status: Inactive', f'Billing Status: ⏳ Trial ({days_left} days left)')
-    
-    # ============================================================
-    # FIXED: github_token is at index 10
-    # ============================================================
     github_status = '✅ Connected' if user[10] else '❌ Not Connected'
     html = html.replace('GitHub Status: Not Connected', f'GitHub Status: {github_status}')
     return html
@@ -1310,46 +1277,32 @@ def terms():
     <h1>Terms & Conditions</h1>
     <p><em>Last updated: June 29, 2026</em></p>
     <hr>
-
     <h2>1. Acceptance of Terms</h2>
     <p>By using Aegis ("the Service"), you agree to be bound by these Terms. If you do not agree, do not use the Service.</p>
-
     <h2>2. Description of Service</h2>
     <p>Aegis provides an AI-powered code review and testing service that integrates with GitHub. It analyzes code changes, generates tests, suggests fixes, and improves code quality. The Service is provided "as is" and "as available".</p>
-
     <h2>3. User Accounts</h2>
     <p>You must create an account to use the Service. You are responsible for maintaining the security of your account and all activity that occurs under it. You agree to provide accurate and complete information. You may not share your account credentials with others.</p>
-
     <h2>4. Payments & Refunds</h2>
     <p>All payments are processed through <span class="highlight">Paddle</span> (international) or <span class="highlight">Razorpay</span> (India). Prices are in USD unless stated otherwise. Subscriptions are billed monthly or annually. We offer a 14-day free trial. Refunds are handled on a case‑by‑case basis – please contact us at <a href="mailto:hello@aegis.tech">hello@aegis.tech</a> for refund requests.</p>
-
     <h2>5. BYOK (Bring Your Own Key)</h2>
     <p>You may use your own API keys for AI providers (e.g., OpenAI, DeepSeek, Anthropic). You are solely responsible for the costs and usage of those services. We never store your API keys in plaintext – they are encrypted in our database.</p>
-
     <h2>6. Intellectual Property</h2>
     <p>All code, content, and materials provided by the Service are owned by Aegis. You retain ownership of your own code and data. By using the Service, you grant us a limited license to access your GitHub repositories solely for the purpose of providing the Service.</p>
-
     <h2>7. Data Security</h2>
     <p>We take reasonable measures to protect your data. However, you acknowledge that no system is 100% secure. We are not liable for unauthorized access, data breaches, or loss of data. We do not store your source code permanently – only diffs for analysis.</p>
-
     <h2>8. Acceptable Use</h2>
     <p>You agree not to misuse the Service. This includes, but is not limited to: attempting to bypass security, using the Service for illegal purposes, or interfering with the Service's integrity.</p>
-
     <h2>9. Termination</h2>
     <p>We may suspend or terminate your account if you violate these Terms or misuse the Service. You may cancel your subscription at any time via your dashboard or by contacting us. Upon termination, your access to the Service will be revoked.</p>
-
     <h2>10. Limitation of Liability</h2>
     <p>To the fullest extent permitted by law, Aegis is not liable for any indirect, incidental, or consequential damages arising from your use of the Service, including but not limited to loss of profits, data, or business interruption.</p>
-
     <h2>11. Changes to Terms</h2>
     <p>We may update these Terms from time to time. We will notify you of material changes via email or by posting a notice on the Service. Continued use after changes constitutes acceptance.</p>
-
     <h2>12. Governing Law</h2>
     <p>These Terms are governed by the laws of India, without regard to its conflict of laws principles. Any disputes shall be resolved in the courts of Mumbai, India.</p>
-
     <h2>13. Contact</h2>
     <p>For any questions, please email <a href="mailto:hello@aegis.tech">hello@aegis.tech</a>.</p>
-
     <hr>
     <a href="/dashboard" class="back">← Back to Dashboard</a>
     </body>
@@ -1390,9 +1343,7 @@ def webhook():
             except ImportError:
                 pass
 
-    # ============================================================
     # CHATBOT & MANUAL COMMANDS
-    # ============================================================
     if event == "issue_comment":
         issue = payload.get("issue", {})
         comment_body = payload.get("comment", {}).get("body", "")
@@ -1562,9 +1513,7 @@ def webhook():
 
         return jsonify({"msg": "Ignored comment"}), 200
 
-    # ============================================================
     # PULL REQUEST (AUTO-HEAL + ROI LOGGING)
-    # ============================================================
     if event == "pull_request" and payload.get("action") in ["opened", "synchronize"]:
         pr_number = payload["number"]
         logger.info(f"Processing PR #{pr_number} in {repo_name}")
@@ -1597,7 +1546,6 @@ def webhook():
 """
             post_comment(repo, pr_number, comment)
 
-            # ROI LOGGING
             bugs_found = 1 if result.get('diff_output') and len(result['diff_output']) > 50 else 0
             time_saved = bugs_found * 10
             try:
