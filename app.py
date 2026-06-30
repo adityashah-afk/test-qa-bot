@@ -466,12 +466,12 @@ def health_check():
     return jsonify({"status": "healthy", "message": "Aegis is running"}), 200
 
 # ============================================================
-# TRY-IT-NOW DEMO (COMPLETELY CLEAN – NO HIDDEN CHARACTERS)
+# TRY-IT-NOW DEMO – CLEAN VERSION (NO HIDDEN CHARACTERS)
 # ============================================================
 @app.route("/try", methods=['GET', 'POST'])
 def try_endpoint():
     if request.method == 'GET':
-        # Use a plain string without any special Unicode characters
+        # Use a clean, manually typed string to avoid any invisible characters
         html = '''
 <!DOCTYPE html>
 <html>
